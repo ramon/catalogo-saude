@@ -11,6 +11,10 @@ mise install
 mise exec -- cargo run -- --output ./runs/current --batch-size 1000
 ```
 
+Para retomar uma execução usando arquivos já baixados e validados pelo SHA-1, acrescente `--reuse-sources`.
+
 A execução padrão coleta medicamentos, cosméticos, cannabis, Portaria 344 e SIGTAP/TUSS/CID-10. DCB está fora do escopo. Referências existentes de `_dumps/anvisa` ficam em `references/anvisa` e são lidas localmente.
 
-Cada execução grava arquivos JSON em diretório de saída, com manifesto de fontes, hashes SHA-256, contagens e lotes nomeados sequencialmente. Os lotes são escritos em arquivos temporários e renomeados ao concluir cada arquivo.
+Cada execução grava os arquivos brutos em `sources/` e mantém `download-control.json` com nome, data do download e SHA-1 de cada cópia. O `manifest.json` registra as URLs, hashes SHA-256, contagens e tempos por etapa. Os lotes JSON são nomeados sequencialmente e escritos por arquivo temporário.
+
+O código fica dividido por responsabilidade: `main.rs` orquestra a CLI; `downloads.rs` obtém e registra as fontes; `anvisa.rs` normaliza os catálogos da Anvisa; `sigtap.rs` lê SIGTAP/TUSS/CID-10; `output.rs` grava os lotes.
