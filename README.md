@@ -59,3 +59,7 @@ As descrições de apresentações usam o [Vocabulário Controlado da Anvisa](ht
 - [Portaria SVS/MS nº 344/1998](https://anvisalegis.datalegis.net/)
 - [Tabelas SIGTAP](https://github.com/RenatoKR/SIGTAP)
 - [Tabelas TISS da ANS](https://www.gov.br/ans/pt-br/assuntos/prestadores/padrao-para-troca-de-informacao-de-saude-suplementar-tiss)
+
+## Licença
+
+Este projeto está disponível sob a licença [MIT](LICENSE).
