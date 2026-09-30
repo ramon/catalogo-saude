@@ -172,7 +172,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "catalog-data-loader"
+name = "catalogo-saude"
 version = "0.1.0"
 dependencies = [
  "calamine",

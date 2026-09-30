@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(180))
-        .user_agent("catalog-data-loader/0.1")
+        .user_agent("catalogo-saude/0.1")
         .build()?;
     let mut manifest = Manifest {
         schema_version: 1,
