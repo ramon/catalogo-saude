@@ -1,16 +1,20 @@
 mod anvisa;
+mod cosmetics;
 mod downloads;
 mod output;
+mod portaria;
+mod prescription;
 mod sigtap;
 
-use anvisa::{normalize_cannabis, normalize_cosmetics, normalize_medicines, normalize_portaria};
+use anvisa::{normalize_cannabis, normalize_medicines, normalize_portaria};
 use chrono::Utc;
 use clap::Parser;
+use cosmetics::normalize_cosmetics;
 use downloads::{
     ANS, CANNABIS, COSMETICS, DownloadControl, MED_CONSULT, MED_OPEN, MED_PRICES, Manifest,
-    PORTARIA, SIGTAP, fetch, record_phase,
+    PORTARIA, SIGTAP, fetch, fetch_file, record_phase,
 };
-use output::{write_atomic, write_batches};
+use output::{write_atomic, write_batches, write_batches_by_status};
 use sigtap::normalize_sigtap;
 use std::{
     collections::BTreeMap,
@@ -33,6 +37,29 @@ struct Args {
     reuse_sources: bool,
 }
 
+fn reference_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let executable = std::env::current_exe()?;
+    let candidates = [
+        executable.parent().map(PathBuf::from),
+        Some(std::env::current_dir()?),
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+    ];
+    for root in candidates.into_iter().flatten() {
+        if [
+            "references/presentation_abbreviations.json",
+            "references/anvisa/formas_fisicas.json",
+            "references/anvisa/restricao.json",
+            "references/anvisa/tarja.json",
+        ]
+        .iter()
+        .all(|file| root.join(file).is_file())
+        {
+            return Ok(root);
+        }
+    }
+    Err("Referências não encontradas: mantenha references/ junto ao executável ou execute na pasta do projeto".into())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_started = Instant::now();
     let args = Args::parse();
@@ -43,6 +70,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Iniciando coleta: saída={}, tamanho dos lotes={}",
         args.output.display(),
         args.batch_size
+    );
+    let project_root = reference_root()?;
+    eprintln!(
+        "Referências locais: {}",
+        project_root.join("references").display()
     );
     fs::create_dir_all(&args.output)?;
     fs::create_dir_all(args.output.join("sources"))?;
@@ -99,12 +131,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut manifest,
         &mut download_control,
     )?;
-    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    eprintln!("Portaria 344: obtenção das listas para classificação dos medicamentos");
+    let portaria = fetch(
+        &client,
+        "portaria_344",
+        PORTARIA,
+        args.reuse_sources,
+        &args.output,
+        &mut manifest,
+        &mut download_control,
+    )?;
     let phase_started = Instant::now();
-    let medicine_rows = normalize_medicines(&med_open, &med_consult, &med_prices, &project_root)?;
+    let portaria_rows = normalize_portaria(&portaria)?;
+    drop(portaria);
+    record_phase(&mut manifest, "normalize.portaria_344", phase_started);
+    let phase_started = Instant::now();
+    let medicine_rows = normalize_medicines(
+        &med_open,
+        &med_consult,
+        &med_prices,
+        &project_root,
+        &portaria_rows,
+    )?;
+    drop((med_open, med_consult, med_prices));
     manifest.counts.insert(
         "medicines".into(),
-        write_batches(&args.output, "medicines", medicine_rows, args.batch_size)?,
+        write_batches_by_status(
+            &args.output,
+            "medicines",
+            medicine_rows,
+            args.batch_size,
+            "Ativo",
+            "Inativo",
+        )?,
     );
     record_phase(
         &mut manifest,
@@ -113,7 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     eprintln!("[2/5] Cosméticos");
-    let cosmetics = fetch(
+    let cosmetics = fetch_file(
         &client,
         "cosmetics",
         COSMETICS,
@@ -142,24 +202,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let phase_started = Instant::now();
     let cannabis_rows = normalize_cannabis(&cannabis)?;
+    drop(cannabis);
     manifest.counts.insert(
         "cannabis".into(),
-        write_batches(&args.output, "cannabis", cannabis_rows, args.batch_size)?,
+        write_batches_by_status(
+            &args.output,
+            "cannabis",
+            cannabis_rows,
+            args.batch_size,
+            "Válido",
+            "Caduco/Cancelado",
+        )?,
     );
     record_phase(&mut manifest, "normalize_and_write.cannabis", phase_started);
 
-    eprintln!("[4/5] Portaria 344");
-    let portaria = fetch(
-        &client,
-        "portaria_344",
-        PORTARIA,
-        args.reuse_sources,
-        &args.output,
-        &mut manifest,
-        &mut download_control,
-    )?;
+    eprintln!("[4/5] Portaria 344: gravação das listas");
     let phase_started = Instant::now();
-    let portaria_rows = normalize_portaria(&portaria)?;
     manifest.counts.insert(
         "portaria_344_lists".into(),
         write_batches(
@@ -195,6 +253,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let phase_started = Instant::now();
     let (procedures, mappings, cids, cid_links) = normalize_sigtap(&sigtap, &ans)?;
+    drop((sigtap, ans));
     manifest.counts.insert(
         "diagnostic_procedures".into(),
         write_batches(

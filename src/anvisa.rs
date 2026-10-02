@@ -1,4 +1,5 @@
-use crate::output::write_batches_iter;
+use crate::portaria::PortariaClassifier;
+use crate::prescription::classify_prescriptions;
 use encoding_rs::WINDOWS_1252;
 use regex::Regex;
 use scraper::{Html, Selector};
@@ -100,6 +101,8 @@ fn date_br(value: &str) -> Value {
 struct PresentationDescriptionExpander {
     values: HashMap<String, String>,
     pattern: Regex,
+    concentration_pattern: Regex,
+    form_pattern: Regex,
 }
 impl PresentationDescriptionExpander {
     fn load(root: &Path) -> Result<Self, Box<dyn std::error::Error>> {
@@ -116,7 +119,63 @@ impl PresentationDescriptionExpander {
                 .collect::<Vec<_>>()
                 .join("|")
         ))?;
-        Ok(Self { values, pattern })
+        let concentration_pattern = Regex::new(
+            r"(?ix)^\s*(?P<strength>\(?\d[\d.,]*(?:\s*\+\s*\d[\d.,]*)*\)?\s*(?:MCG|MG|KG|G|UI|U\.?I\.?|MUI|MEQ|MMOL|MOL|MBQ|GBQ|ML|L|%)(?:\s*/\s*(?:\d[\d.,]*\s*)?(?:MCG|MG|KG|G|UI|ML|L|DOSE|H|CM2))?(?:\s*(?:\+|/)\s*\d[\d.,]*\s*(?:MCG|MG|KG|G|UI|U\.?I\.?|MUI|MEQ|MMOL|ML|L|%)(?:\s*/\s*(?:\d[\d.,]*\s*)?(?:MG|G|ML|L|DOSE|H|CM2))?)*)",
+        )?;
+        // Packaging and accessories are deliberately excluded from form codes.
+        let form_starts = [
+            "ADES", "ANEL", "AER", "BAR", "BAST", "CAP", "COM", "DIU", "FIL", "GLOB", "GOMA",
+            "GRAN", "IMPL", "PAS", "PO", "RAS", "SAB", "SUP", "OVL", "TABLE", "EMU", "ESM", "LIQ",
+            "OLE", "COLUT", "ELX", "SOL", "SUS", "SUSP", "XAMP", "XPE", "CREM", "EMPL", "GEL",
+            "POM", "PAST", "GAS",
+        ];
+        let mut form_terms = values
+            .keys()
+            .filter(|term| {
+                form_starts.contains(&term.split_whitespace().next().unwrap_or_default())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        form_terms.sort_by_key(|term| std::cmp::Reverse(term.len()));
+        let form_pattern = Regex::new(&format!(
+            r"^(?:{})(?:\s+(?:BUC|CAPI|DERM|EPI|INAL NAS|INAL OR|INAL|IAR|IA|ID|IM|IT|IU|IVIT|IV|IRR|NAS|OFT|OR|OTO|RET|SC|SUBL|TRANSD|URET|VAG))?\b",
+            form_terms
+                .iter()
+                .map(|term| regex::escape(term))
+                .collect::<Vec<_>>()
+                .join("|")
+        ))?;
+        Ok(Self {
+            values,
+            pattern,
+            concentration_pattern,
+            form_pattern,
+        })
+    }
+
+    fn extract(&self, description: &str) -> (Option<String>, Option<String>) {
+        let strength = self
+            .concentration_pattern
+            .captures(description)
+            .and_then(|captures| captures.name("strength"));
+        let remainder = strength
+            .map_or(description, |matched| &description[matched.end()..])
+            .trim_start();
+        let form = self
+            .form_pattern
+            .find(remainder)
+            .map(|matched| self.expand(matched.as_str()));
+        // A leading volume with packaging only describes the container, not a concentration.
+        let concentration = strength.and_then(|matched| {
+            let raw = matched.as_str();
+            let volume_only = !raw.contains('/') && (raw.ends_with("ML") || raw.ends_with(" L"));
+            if volume_only && form.is_none() {
+                None
+            } else {
+                Some(raw.to_string())
+            }
+        });
+        (concentration, form)
     }
 
     fn expand(&self, description: &str) -> String {
@@ -155,6 +214,7 @@ pub fn normalize_medicines(
     consult: &[u8],
     prices: &[u8],
     root: &Path,
+    portaria_lists: &[Value],
 ) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
     let open_rows = csv_rows(open, b';')?;
     let consult_rows = csv_rows(consult, b';')?;
@@ -178,6 +238,7 @@ pub fn normalize_medicines(
         }
     }
     let mappings = load_anvisa_mappings(root)?;
+    let portaria_classifier = PortariaClassifier::new(portaria_lists);
     let description_expander = PresentationDescriptionExpander::load(root)?;
     let mut by_product: BTreeMap<String, Vec<HashMap<String, String>>> = BTreeMap::new();
     for r in consult_rows {
@@ -234,6 +295,19 @@ pub fn normalize_medicines(
             .iter()
             .filter(|id| !id.is_empty())
             .find_map(|id| open_by_id.get(&normalized_id(id)).and_then(|v| v.first()));
+        let mut therapeutic_classes = BTreeSet::new();
+        for row in &rows {
+            let matched_rows = [get(row, "NU_PROCESSO"), get(row, "NU_REGISTRO_PRODUTO")]
+                .iter()
+                .filter(|id| !id.is_empty())
+                .find_map(|id| open_by_id.get(&normalized_id(id)));
+            for matched in matched_rows.into_iter().flatten() {
+                let class = get(matched, "CLASSE_TERAPEUTICA");
+                if !class.is_empty() && class != "-" {
+                    therapeutic_classes.insert(class);
+                }
+            }
+        }
         let name = matching
             .map(|r| get(r, "NOME_PRODUTO"))
             .filter(|s| !s.is_empty())
@@ -241,6 +315,7 @@ pub fn normalize_medicines(
         let mut forms = BTreeSet::new();
         let mut restrictions = BTreeSet::new();
         let mut restriction_types = BTreeSet::new();
+        let mut prescription_restrictions = BTreeSet::new();
         let mut tarjas = BTreeSet::new();
         let mut ingredients = BTreeSet::new();
         let mut synonyms = BTreeSet::new();
@@ -272,6 +347,13 @@ pub fn normalize_medicines(
             {
                 if let Some(kind) = mappings.get("CO_RESTRICAO_TYPE").and_then(|m| m.get(code)) {
                     restriction_types.insert(kind.clone());
+                    if kind == "P" {
+                        if let Some(description) =
+                            mappings.get("CO_RESTRICAO").and_then(|m| m.get(code))
+                        {
+                            prescription_restrictions.insert(description.clone());
+                        }
+                    }
                 }
             }
         }
@@ -291,14 +373,33 @@ pub fn normalize_medicines(
             let p = &price_rows[price_index];
             let p_reg = get(p, "NU_REGISTRO");
             let description = get(p, "DS_APRESENTACAO");
-            presentations.push(json!({"ggrem":null_if_empty(get(p,"CO_GGREM")),"ean":null_if_empty(get(p,"CO_EAN")),"registration_number":p_reg,"description":description,"expanded_description":description_expander.expand(&description),"active_ingredient":get(p,"DS_SUBSTANCIA"),"hospital_restricted":get(p,"ST_REST_HOSP"),"maximum_price":decimal_price(&get(p,"NU_PF18_INTEIRO"))}));
+            let (concentration, physical_form) = description_expander.extract(&description);
+            presentations.push(json!({"concentration":concentration,"physical_form":physical_form,"ggrem":null_if_empty(get(p,"CO_GGREM")),"ean":null_if_empty(get(p,"CO_EAN")),"registration_number":p_reg,"description":description,"expanded_description":description_expander.expand(&description),"active_ingredient":get(p,"DS_SUBSTANCIA"),"hospital_restricted":get(p,"ST_REST_HOSP"),"maximum_price":decimal_price(&get(p,"NU_PF18_INTEIRO"))}));
         }
+        if ingredients.is_empty() {
+            ingredients.extend(
+                get(matching.unwrap_or(first), "PRINCIPIO_ATIVO")
+                    .split([';', '|', '+'])
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty() && *value != "-")
+                    .map(str::to_string),
+            );
+        }
+        let portaria_344_lists =
+            portaria_classifier.classify(&prescription_restrictions, &ingredients);
+        let sncr_prescription_types = classify_prescriptions(
+            &prescription_restrictions,
+            &portaria_344_lists,
+            &ingredients,
+            &forms,
+            &presentations,
+        );
         let raw_manufacturer = first_nonempty(&[
             get(matching.unwrap_or(first), "EMPRESA_DETENTORA_REGISTRO"),
             get(first, "NO_RAZAO_SOCIAL_EMPRESA"),
         ]);
         let (manufacturer_cnpj, manufacturer) = manufacturer_parts(&raw_manufacturer);
-        out.push(json!({"source_identifier":source_id,"regulatory_identifier":first_nonempty(&[get(matching.unwrap_or(first),"NUMERO_PROCESSO"),get(matching.unwrap_or(first),"NUMERO_REGISTRO_PRODUTO"),process,reg]),"name":name,"manufacturer":manufacturer,"manufacturer_cnpj":manufacturer_cnpj,"regulatory_status":first_nonempty(&[get(matching.unwrap_or(first),"SITUACAO_REGISTRO"),get(first,"VALIDADE_SITUACAO")]),"regulatory_category":first_nonempty(&[get(matching.unwrap_or(first),"CATEGORIA_REGULATORIA"),get(first,"DS_TIPO_CATEGORIA_REGULATORIA")]),"reference":get(first,"DS_REFERENCIA"),"synonyms":synonyms,"indications":get(first,"INDICACOES"),"physical_forms":forms,"regulatory_restrictions":restrictions,"regulatory_restriction_types":restriction_types,"tarja":tarjas,"fractional_dispensing":get(first,"ST_DISPENSA_FRACIONADA").split([',',';','+']).map(str::trim).filter(|x|!x.is_empty()).collect::<Vec<_>>(),"active_ingredients":first_nonempty(&[get(first,"SUBSTANCIAS_MEDICAMENTOS"),get(matching.unwrap_or(first),"PRINCIPIO_ATIVO")]),"product_type":get(matching.unwrap_or(first),"TIPO_PRODUTO"),"presentations":presentations}));
+        out.push(json!({"source_identifier":source_id,"regulatory_identifier":first_nonempty(&[get(matching.unwrap_or(first),"NUMERO_PROCESSO"),get(matching.unwrap_or(first),"NUMERO_REGISTRO_PRODUTO"),process,reg]),"name":name,"manufacturer":manufacturer,"manufacturer_cnpj":manufacturer_cnpj,"regulatory_status":first_nonempty(&[get(matching.unwrap_or(first),"SITUACAO_REGISTRO"),get(first,"VALIDADE_SITUACAO")]),"therapeutic_classes":therapeutic_classes,"regulatory_category":first_nonempty(&[get(matching.unwrap_or(first),"CATEGORIA_REGULATORIA"),get(first,"DS_TIPO_CATEGORIA_REGULATORIA")]),"reference":get(first,"DS_REFERENCIA"),"synonyms":synonyms,"indications":get(first,"INDICACOES"),"physical_forms":forms,"regulatory_restrictions":restrictions,"regulatory_restriction_types":restriction_types,"portaria_344_lists":portaria_344_lists,"sncr_prescription_types":sncr_prescription_types,"tarja":tarjas,"fractional_dispensing":get(first,"ST_DISPENSA_FRACIONADA").split([',',';','+']).map(str::trim).filter(|x|!x.is_empty()).collect::<Vec<_>>(),"active_ingredients":first_nonempty(&[get(first,"SUBSTANCIAS_MEDICAMENTOS"),get(matching.unwrap_or(first),"PRINCIPIO_ATIVO")]),"product_type":get(matching.unwrap_or(first),"TIPO_PRODUTO"),"presentations":presentations}));
     }
     eprintln!(
         "Medicamentos: normalização concluída ({} produtos)",
@@ -342,123 +443,6 @@ fn load_anvisa_mappings(
     }
     Ok(all)
 }
-pub fn normalize_cosmetics(
-    bytes: &[u8],
-    output: &Path,
-    batch_size: usize,
-) -> Result<usize, Box<dyn std::error::Error>> {
-    let text = decode(bytes);
-    let mut lines = text.lines();
-    let header_line = lines.next().ok_or("CSV de cosméticos sem cabeçalho")?;
-    let headers = parse_delimited_line(header_line)?;
-    let mut columns = HashMap::new();
-    for (index, header) in headers.iter().enumerate() {
-        columns.insert(header.as_str(), index);
-    }
-    for required in [
-        "NU_PROCESSO",
-        "NO_PRODUTO",
-        "NO_RAZAO_SOCIAL_EMPRESA",
-        "ST_SITUACAO_PRODUTO",
-        "NU_REGISTRO",
-    ] {
-        if !columns.contains_key(required) {
-            return Err(format!("CSV de cosméticos sem coluna {required}").into());
-        }
-    }
-    eprintln!("Cosméticos: processando linhas da fonte corrigindo aspas inválidas conhecidas");
-    let mut by: HashMap<String, CosmeticRecord> = HashMap::new();
-    let situation_index = columns["ST_SITUACAO_PRODUTO"];
-    let mut row_count = 0usize;
-    for (line_index, line) in lines.enumerate() {
-        row_count += 1;
-        if row_count % 100_000 == 0 {
-            eprintln!("Cosméticos: processadas {row_count} linhas");
-        }
-        let line_number = line_index + 2;
-        let mut values = parse_delimited_line(line).unwrap_or_default();
-        if values.len() != headers.len()
-            || !matches!(
-                values.get(situation_index).map(String::as_str),
-                Some("S" | "N")
-            )
-        {
-            values = parse_delimited_line(&line.replacen("\"\";", "\"\"\";", 1))?;
-        }
-        if values.len() != headers.len() {
-            return Err(format!(
-                "linha {line_number} possui quantidade inválida de colunas em cosméticos"
-            )
-            .into());
-        }
-        let field = |name: &str| {
-            values
-                .get(columns[name])
-                .cloned()
-                .unwrap_or_default()
-                .trim()
-                .to_string()
-        };
-        let id = field("NU_PROCESSO");
-        let name = field("NO_PRODUTO");
-        if id.is_empty() || name.is_empty() {
-            return Err(format!("cosmético sem processo/nome na linha {line_number}").into());
-        };
-        let status = field("ST_SITUACAO_PRODUTO");
-        if status != "S" && status != "N" {
-            return Err(format!("situação cosmético inválida na linha {line_number}").into());
-        };
-        let manufacturer = field("NO_RAZAO_SOCIAL_EMPRESA");
-        let row = CosmeticRecord {
-            registration_number: field("NU_REGISTRO"),
-            name,
-            manufacturer: if manufacturer == "-" {
-                String::new()
-            } else {
-                manufacturer
-            },
-            regulatory_status: status.clone(),
-        };
-        if let Some(previous) = by.get_mut(&id) {
-            if previous.registration_number != row.registration_number
-                || previous.name != row.name
-                || previous.manufacturer != row.manufacturer
-            {
-                return Err(format!("NU_PROCESSO {id} conflitante").into());
-            }
-            if status == "N" {
-                previous.regulatory_status = "N".into();
-            }
-        } else {
-            by.insert(id, row);
-        }
-    }
-    eprintln!(
-        "Cosméticos: {row_count} linhas lidas, {} produtos após deduplicação",
-        by.len()
-    );
-    let rows = by.into_iter().map(|(id, row)| {
-        json!({"source_identifier":id,"registration_number":row.registration_number,"name":row.name,"manufacturer":row.manufacturer,"regulatory_status":row.regulatory_status})
-    });
-    write_batches_iter(output, "cosmetics", rows, batch_size)
-}
-struct CosmeticRecord {
-    registration_number: String,
-    name: String,
-    manufacturer: String,
-    regulatory_status: String,
-}
-fn parse_delimited_line(line: &str) -> Result<Vec<String>, csv::Error> {
-    let mut reader = csv::ReaderBuilder::new()
-        .delimiter(b';')
-        .has_headers(false)
-        .flexible(true)
-        .from_reader(line.as_bytes());
-    match reader.records().next() {
-        Some(record) => record.map(|record| record.iter().map(str::to_string).collect()),
-        None => Ok(Vec::new()),
-    }
-}
 pub fn normalize_cannabis(bytes: &[u8]) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
     let rows = csv_rows(bytes, b';')?;
     eprintln!("Cannabis: {} linhas lidas", rows.len());
@@ -499,11 +483,13 @@ pub fn normalize_portaria(bytes: &[u8]) -> Result<Vec<Value>, Box<dyn std::error
     let item = Regex::new(r"^(\d+(?:\.\d+)*)[.)]\s*(.*)$")?;
     let mut lists = Vec::new();
     let mut current: Option<Value> = None;
+    let mut in_addenda = false;
     for b in blocks {
         if let Some(c) = header.captures(&b) {
             if let Some(v) = current.take() {
                 lists.push(v)
             }
+            in_addenda = false;
             let code = c[1].to_uppercase();
             current = Some(
                 json!({"code":code,"title":b,"label":format!("Lista {code}"),"prescription_notice":"","is_active":true,"is_group":code=="F","entries":[],"addenda":[]}),
@@ -514,14 +500,31 @@ pub fn normalize_portaria(bytes: &[u8]) -> Result<Vec<Value>, Box<dyn std::error
             break;
         }
         if let Some(v) = current.as_mut() {
-            if let Some(m) = item.captures(&b) {
+            let normalized = crate::portaria::normalize_text(&b);
+            if normalized.starts_with("ADENDO") {
+                in_addenda = true;
+                continue;
+            }
+            if in_addenda {
+                let number = item
+                    .captures(&b)
+                    .map(|m| m[1].to_string())
+                    .unwrap_or_default();
+                v["addenda"].as_array_mut().unwrap().push(json!({
+                    "item_number": number, "text": b,
+                    "rule_type": crate::portaria::addendum_rule_type(&b),
+                    "target_substance_name": ""
+                }));
+            } else if let Some(m) = item.captures(&b) {
                 let n = m[1].to_string();
                 let name = m[2].trim().to_string();
-                if !name.is_empty() {
+                if !name.is_empty() && !normalized.contains("EXCLUIDO") {
                     v["entries"].as_array_mut().unwrap().push(json!({"item_number":n,"name":name,"aliases":name.split(" ou ").skip(1).collect::<Vec<_>>(),"source_text":b,"kind":"SUBSTANCE"}));
                 }
-            } else if b.to_uppercase().starts_with("ADENDO") {
-                v["addenda"].as_array_mut().unwrap().push(json!({"item_number":"","text":b,"rule_type":"TEXT_ONLY","target_substance_name":""}));
+            } else if normalized.contains("SUJEIT") && v["entries"].as_array().unwrap().is_empty() {
+                v["prescription_notice"] = json!(b);
+            } else if normalized.starts_with("LISTA DAS") || normalized.starts_with("LISTA DOS") {
+                v["title"] = json!(b);
             }
         }
     }
@@ -533,4 +536,105 @@ pub fn normalize_portaria(bytes: &[u8]) -> Result<Vec<Value>, Box<dyn std::error
     };
     eprintln!("Portaria 344: {} listas normalizadas", lists.len());
     Ok(lists)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presentations_extract_strength_without_packaging_and_preserve_unknown_codes() {
+        let parser =
+            PresentationDescriptionExpander::load(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        for (description, concentration, form) in [
+            (
+                "50 MCG/ML SOL INJ CX 5 AMP VD INC X 10 ML",
+                Some("50 MCG/ML"),
+                Some("Solução Injetável"),
+            ),
+            (
+                "5 MG COM REV CT BL AL AL X 30",
+                Some("5 MG"),
+                Some("Comprimido Revestido"),
+            ),
+            (
+                "4 MG/ML SOL OR CT FR X 10 ML",
+                Some("4 MG/ML"),
+                Some("Solução Oral"),
+            ),
+            (
+                "600 MG + 200 UI COM REV CT FR X 60",
+                Some("600 MG + 200 UI"),
+                Some("Comprimido Revestido"),
+            ),
+            (
+                "(30+500+500)MG CAP CT X 14",
+                Some("(30+500+500)MG"),
+                Some("Cápsula"),
+            ),
+            (
+                "11,7 MG/2,7 MG ANEL VAG CT X 3",
+                Some("11,7 MG/2,7 MG"),
+                Some("Anel Vaginal"),
+            ),
+            ("0,1 % GEL CT BG X 30 G", Some("0,1 %"), Some("Gel")),
+            ("SOL INJ CX AMP X 10 ML", None, Some("Solução Injetável")),
+            ("20 ML CT FR VD X 1", None, None),
+            ("250MG COMP CX 3 BLX10", Some("250MG"), None),
+        ] {
+            let (strength, physical_form) = parser.extract(description);
+            assert_eq!(strength.as_deref(), concentration, "{description}");
+            assert_eq!(physical_form.as_deref(), form, "{description}");
+        }
+    }
+
+    #[test]
+    fn portaria_keeps_prescription_and_numbered_addenda_separate() {
+        let html = br#"<p>LISTA - A1</p><p>LISTA DAS SUBSTANCIAS ENTORPECENTES</p>
+            <p>(Sujeitas a Notificacao de Receita "A")</p><p>1. Morfina</p>
+            <p>ADENDO:</p><p>1) ficam tambem sob controle:</p>
+            <p>1.1. os sais e isomeros das substancias enumeradas acima</p>
+            <p>2) preparacoes a base de morfina</p>
+            <p>LISTA - B1</p><p>(Sujeitas a Notificacao de Receita "B")</p>
+            <p>1. Diazepam</p><p>2. (Excluido)</p><p>ANEXO II</p><p>1. Ignorar</p>"#;
+        let lists = normalize_portaria(html).unwrap();
+        assert_eq!(lists.len(), 2);
+        assert_eq!(lists[0]["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(lists[0]["title"], "LISTA DAS SUBSTANCIAS ENTORPECENTES");
+        assert_eq!(
+            lists[0]["prescription_notice"],
+            "(Sujeitas a Notificacao de Receita \"A\")"
+        );
+        assert_eq!(lists[0]["addenda"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            lists[0]["addenda"][1]["rule_type"],
+            "INCLUDE_SALTS_AND_ISOMERS"
+        );
+        assert_eq!(lists[1]["entries"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn medicines_classify_only_p_restrictions_and_use_all_product_substances() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let open = b"NUMERO_PROCESSO;PRINCIPIO_ATIVO;CLASSE_TERAPEUTICA\n2;tramadol;ANALGESICOS\n2;tramadol;OUTROS, ASSOCIACOES\n2;tramadol;ANALGESICOS\n";
+        let consult = b"NU_PROCESSO;NO_PRODUTO;CO_RESTRICAO;SUBSTANCIAS_MEDICAMENTOS\n1;Example;536;paracetamol\n1;Example;536;cloridrato de tramadol\n2;Fallback;536;\n3;No P;530;tramadol\n4;Prescription;538;\n";
+        let prices = b"NU_REGISTRO;DS_SUBSTANCIA\n";
+        let lists = vec![
+            json!({"code":"A2","prescription_notice":"Notificacao de Receita A", "entries":[{"name":"tramadol"}], "addenda":[{"text":"os sais das substancias enumeradas acima"}]}),
+            json!({"code":"B1","prescription_notice":"Notificacao de Receita B", "entries":[{"name":"diazepam"}], "addenda":[]}),
+        ];
+        let rows = normalize_medicines(open, consult, prices, root, &lists).unwrap();
+        assert_eq!(rows[0]["portaria_344_lists"], json!(["A2"]));
+        assert_eq!(rows[0]["active_ingredients"], "paracetamol");
+        assert_eq!(rows[1]["portaria_344_lists"], json!(["A2"]));
+        assert_eq!(
+            rows[1]["therapeutic_classes"],
+            json!(["ANALGESICOS", "OUTROS, ASSOCIACOES"])
+        );
+        assert_eq!(rows[0]["therapeutic_classes"], json!([]));
+        assert_eq!(rows[2]["portaria_344_lists"], json!([]));
+        assert_eq!(rows[3]["portaria_344_lists"], json!(["B1"]));
+        assert_eq!(rows[3]["sncr_prescription_types"], json!(["NRB"]));
+        assert_eq!(rows[2]["sncr_prescription_types"], json!([]));
+    }
 }
