@@ -60,6 +60,22 @@ fn reference_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Err("Referências não encontradas: mantenha references/ junto ao executável ou execute na pasta do projeto".into())
 }
 
+fn run_catalog(
+    name: &str,
+    manifest: &mut Manifest,
+    job: impl FnOnce(&mut Manifest) -> Result<(), Box<dyn std::error::Error>>,
+) {
+    let previous_counts = manifest.counts.clone();
+    let started = Instant::now();
+    if let Err(error) = job(manifest) {
+        manifest.counts = previous_counts;
+        let message = error.to_string();
+        eprintln!("Falha no catálogo {name}: {message}. Continuando com os demais catálogos");
+        manifest.catalog_errors.insert(name.into(), message);
+        record_phase(manifest, &format!("failed.{name}"), started);
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_started = Instant::now();
     let args = Args::parse();
@@ -70,11 +86,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Iniciando coleta: saída={}, tamanho dos lotes={}",
         args.output.display(),
         args.batch_size
-    );
-    let project_root = reference_root()?;
-    eprintln!(
-        "Referências locais: {}",
-        project_root.join("references").display()
     );
     fs::create_dir_all(&args.output)?;
     fs::create_dir_all(args.output.join("sources"))?;
@@ -93,7 +104,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(180))
-        .user_agent("catalogo-saude/0.1")
+        .connect_timeout(Duration::from_secs(30))
+        .user_agent(concat!("catalogo-saude/", env!("CARGO_PKG_VERSION")))
         .build()?;
     let mut manifest = Manifest {
         schema_version: 1,
@@ -102,194 +114,222 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         counts: BTreeMap::new(),
         timings_ms: BTreeMap::new(),
         total_elapsed_ms: 0,
+        catalog_errors: BTreeMap::new(),
     };
-    eprintln!("[1/5] Medicamentos: obtenção e cruzamento das três fontes");
-    let med_open = fetch(
-        &client,
-        "medicines_open",
-        MED_OPEN,
-        args.reuse_sources,
-        &args.output,
-        &mut manifest,
-        &mut download_control,
-    )?;
-    let med_consult = fetch(
-        &client,
-        "medicines_consultation",
-        MED_CONSULT,
-        args.reuse_sources,
-        &args.output,
-        &mut manifest,
-        &mut download_control,
-    )?;
-    let med_prices = fetch(
-        &client,
-        "medicines_prices",
-        MED_PRICES,
-        args.reuse_sources,
-        &args.output,
-        &mut manifest,
-        &mut download_control,
-    )?;
-
-    eprintln!("Portaria 344: obtenção das listas para classificação dos medicamentos");
-    let portaria = fetch(
-        &client,
-        "portaria_344",
-        PORTARIA,
-        args.reuse_sources,
-        &args.output,
-        &mut manifest,
-        &mut download_control,
-    )?;
-    let phase_started = Instant::now();
-    let portaria_rows = normalize_portaria(&portaria)?;
-    drop(portaria);
-    record_phase(&mut manifest, "normalize.portaria_344", phase_started);
-    let phase_started = Instant::now();
-    let medicine_rows = normalize_medicines(
-        &med_open,
-        &med_consult,
-        &med_prices,
-        &project_root,
-        &portaria_rows,
-    )?;
-    drop((med_open, med_consult, med_prices));
-    manifest.counts.insert(
-        "medicines".into(),
-        write_batches_by_status(
+    let mut portaria_rows = None;
+    run_catalog("medicines", &mut manifest, |manifest| {
+        let project_root = reference_root()?;
+        eprintln!(
+            "Referências locais: {}",
+            project_root.join("references").display()
+        );
+        eprintln!("[1/5] Medicamentos: obtenção e cruzamento das três fontes");
+        let med_open = fetch(
+            &client,
+            "medicines_open",
+            MED_OPEN,
+            args.reuse_sources,
             &args.output,
-            "medicines",
-            medicine_rows,
-            args.batch_size,
-            "Ativo",
-            "Inativo",
-        )?,
-    );
-    record_phase(
-        &mut manifest,
-        "normalize_and_write.medicines",
-        phase_started,
-    );
-
-    eprintln!("[2/5] Cosméticos");
-    let cosmetics = fetch_file(
-        &client,
-        "cosmetics",
-        COSMETICS,
-        args.reuse_sources,
-        &args.output,
-        &mut manifest,
-        &mut download_control,
-    )?;
-    let phase_started = Instant::now();
-    let cosmetic_count = normalize_cosmetics(&cosmetics, &args.output, args.batch_size)?;
-    manifest.counts.insert("cosmetics".into(), cosmetic_count);
-    record_phase(
-        &mut manifest,
-        "normalize_and_write.cosmetics",
-        phase_started,
-    );
-    eprintln!("[3/5] Produtos de cannabis");
-    let cannabis = fetch(
-        &client,
-        "cannabis",
-        CANNABIS,
-        args.reuse_sources,
-        &args.output,
-        &mut manifest,
-        &mut download_control,
-    )?;
-    let phase_started = Instant::now();
-    let cannabis_rows = normalize_cannabis(&cannabis)?;
-    drop(cannabis);
-    manifest.counts.insert(
-        "cannabis".into(),
-        write_batches_by_status(
+            manifest,
+            &mut download_control,
+        )?;
+        let med_consult = fetch(
+            &client,
+            "medicines_consultation",
+            MED_CONSULT,
+            args.reuse_sources,
             &args.output,
+            manifest,
+            &mut download_control,
+        )?;
+        let med_prices = fetch(
+            &client,
+            "medicines_prices",
+            MED_PRICES,
+            args.reuse_sources,
+            &args.output,
+            manifest,
+            &mut download_control,
+        )?;
+
+        eprintln!("Portaria 344: obtenção das listas para classificação dos medicamentos");
+        let portaria = fetch(
+            &client,
+            "portaria_344",
+            PORTARIA,
+            args.reuse_sources,
+            &args.output,
+            manifest,
+            &mut download_control,
+        )?;
+        let phase_started = Instant::now();
+        portaria_rows = Some(normalize_portaria(&portaria)?);
+        drop(portaria);
+        record_phase(manifest, "normalize.portaria_344", phase_started);
+        let phase_started = Instant::now();
+        let medicine_rows = normalize_medicines(
+            &med_open,
+            &med_consult,
+            &med_prices,
+            &project_root,
+            portaria_rows
+                .as_deref()
+                .ok_or("Listas da Portaria 344 indisponíveis")?,
+        )?;
+        drop((med_open, med_consult, med_prices));
+        manifest.counts.insert(
+            "medicines".into(),
+            write_batches_by_status(
+                &args.output,
+                "medicines",
+                medicine_rows,
+                args.batch_size,
+                "Ativo",
+                "Inativo",
+            )?,
+        );
+        record_phase(manifest, "normalize_and_write.medicines", phase_started);
+
+        Ok(())
+    });
+    run_catalog("cosmetics", &mut manifest, |manifest| {
+        eprintln!("[2/5] Cosméticos");
+        let cosmetics = fetch_file(
+            &client,
+            "cosmetics",
+            COSMETICS,
+            args.reuse_sources,
+            &args.output,
+            manifest,
+            &mut download_control,
+        )?;
+        let phase_started = Instant::now();
+        let cosmetic_count = normalize_cosmetics(&cosmetics, &args.output, args.batch_size)?;
+        manifest.counts.insert("cosmetics".into(), cosmetic_count);
+        record_phase(manifest, "normalize_and_write.cosmetics", phase_started);
+        Ok(())
+    });
+    run_catalog("cannabis", &mut manifest, |manifest| {
+        eprintln!("[3/5] Produtos de cannabis");
+        let cannabis = fetch(
+            &client,
             "cannabis",
-            cannabis_rows,
-            args.batch_size,
-            "Válido",
-            "Caduco/Cancelado",
-        )?,
-    );
-    record_phase(&mut manifest, "normalize_and_write.cannabis", phase_started);
+            CANNABIS,
+            args.reuse_sources,
+            &args.output,
+            manifest,
+            &mut download_control,
+        )?;
+        let phase_started = Instant::now();
+        let cannabis_rows = normalize_cannabis(&cannabis)?;
+        drop(cannabis);
+        manifest.counts.insert(
+            "cannabis".into(),
+            write_batches_by_status(
+                &args.output,
+                "cannabis",
+                cannabis_rows,
+                args.batch_size,
+                "Válido",
+                "Caduco/Cancelado",
+            )?,
+        );
+        record_phase(manifest, "normalize_and_write.cannabis", phase_started);
 
-    eprintln!("[4/5] Portaria 344: gravação das listas");
-    let phase_started = Instant::now();
-    manifest.counts.insert(
-        "portaria_344_lists".into(),
-        write_batches(
+        Ok(())
+    });
+    run_catalog("portaria_344", &mut manifest, |manifest| {
+        eprintln!("[4/5] Portaria 344: gravação das listas");
+        if portaria_rows.is_none() {
+            let raw = fetch(
+                &client,
+                "portaria_344",
+                PORTARIA,
+                args.reuse_sources,
+                &args.output,
+                manifest,
+                &mut download_control,
+            )?;
+            let started = Instant::now();
+            portaria_rows = Some(normalize_portaria(&raw)?);
+            record_phase(manifest, "normalize.portaria_344", started);
+        }
+        let phase_started = Instant::now();
+        manifest.counts.insert(
+            "portaria_344_lists".into(),
+            write_batches(
+                &args.output,
+                "portaria-344/lists",
+                portaria_rows
+                    .take()
+                    .ok_or("Listas da Portaria 344 indisponíveis")?,
+                args.batch_size,
+            )?,
+        );
+        record_phase(manifest, "normalize_and_write.portaria_344", phase_started);
+        Ok(())
+    });
+    run_catalog("sigtap", &mut manifest, |manifest| {
+        eprintln!("[5/5] SIGTAP, TUSS e CID-10");
+        let sigtap = fetch(
+            &client,
+            "sigtap",
+            SIGTAP,
+            args.reuse_sources,
             &args.output,
-            "portaria-344/lists",
-            portaria_rows,
-            args.batch_size,
-        )?,
-    );
-    record_phase(
-        &mut manifest,
-        "normalize_and_write.portaria_344",
-        phase_started,
-    );
-    eprintln!("[5/5] SIGTAP, TUSS e CID-10");
-    let sigtap = fetch(
-        &client,
-        "sigtap",
-        SIGTAP,
-        args.reuse_sources,
-        &args.output,
-        &mut manifest,
-        &mut download_control,
-    )?;
-    let ans = fetch(
-        &client,
-        "ans_tuss_sigtap",
-        ANS,
-        args.reuse_sources,
-        &args.output,
-        &mut manifest,
-        &mut download_control,
-    )?;
-    let phase_started = Instant::now();
-    let (procedures, mappings, cids, cid_links) = normalize_sigtap(&sigtap, &ans)?;
-    drop((sigtap, ans));
-    manifest.counts.insert(
-        "diagnostic_procedures".into(),
-        write_batches(
+            manifest,
+            &mut download_control,
+        )?;
+        let ans = fetch(
+            &client,
+            "ans_tuss_sigtap",
+            ANS,
+            args.reuse_sources,
             &args.output,
-            "sigtap/procedures",
-            procedures,
-            args.batch_size,
-        )?,
-    );
-    manifest.counts.insert(
-        "tuss_mappings".into(),
-        write_batches(
-            &args.output,
-            "sigtap/tuss-mappings",
-            mappings,
-            args.batch_size,
-        )?,
-    );
-    manifest.counts.insert(
-        "cid10_codes".into(),
-        write_batches(&args.output, "sigtap/cid10", cids, args.batch_size)?,
-    );
-    manifest.counts.insert(
-        "procedure_cid10_links".into(),
-        write_batches(
-            &args.output,
-            "sigtap/cid10-links",
-            cid_links,
-            args.batch_size,
-        )?,
-    );
-    record_phase(
-        &mut manifest,
-        "normalize_and_write.sigtap_tuss_cid10",
-        phase_started,
-    );
+            manifest,
+            &mut download_control,
+        )?;
+        let phase_started = Instant::now();
+        let (procedures, mappings, cids, cid_links) = normalize_sigtap(&sigtap, &ans)?;
+        drop((sigtap, ans));
+        manifest.counts.insert(
+            "diagnostic_procedures".into(),
+            write_batches(
+                &args.output,
+                "sigtap/procedures",
+                procedures,
+                args.batch_size,
+            )?,
+        );
+        manifest.counts.insert(
+            "tuss_mappings".into(),
+            write_batches(
+                &args.output,
+                "sigtap/tuss-mappings",
+                mappings,
+                args.batch_size,
+            )?,
+        );
+        manifest.counts.insert(
+            "cid10_codes".into(),
+            write_batches(&args.output, "sigtap/cid10", cids, args.batch_size)?,
+        );
+        manifest.counts.insert(
+            "procedure_cid10_links".into(),
+            write_batches(
+                &args.output,
+                "sigtap/cid10-links",
+                cid_links,
+                args.batch_size,
+            )?,
+        );
+        record_phase(
+            manifest,
+            "normalize_and_write.sigtap_tuss_cid10",
+            phase_started,
+        );
+        Ok(())
+    });
     manifest.total_elapsed_ms = run_started.elapsed().as_millis();
     eprintln!(
         "Tempo total da coleta: {:.3}s",
@@ -299,10 +339,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &args.output.join("manifest.json"),
         &serde_json::to_vec_pretty(&manifest)?,
     )?;
+    if !manifest.catalog_errors.is_empty() {
+        return Err(format!(
+            "Coleta concluída com falhas nos catálogos: {}. Os demais foram processados; consulte {}",
+            manifest.catalog_errors.keys().cloned().collect::<Vec<_>>().join(", "),
+            args.output.join("manifest.json").display()
+        ).into());
+    }
     println!(
         "Concluído: {} registros em {}",
         manifest.counts.values().sum::<usize>(),
         args.output.display()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_catalog_does_not_stop_later_jobs_or_publish_partial_counts() {
+        let mut manifest = Manifest {
+            schema_version: 1,
+            generated_at: String::new(),
+            sources: BTreeMap::new(),
+            counts: BTreeMap::new(),
+            timings_ms: BTreeMap::new(),
+            total_elapsed_ms: 0,
+            catalog_errors: BTreeMap::new(),
+        };
+        run_catalog("medicines", &mut manifest, |manifest| {
+            let project_root = reference_root()?;
+            eprintln!(
+                "Referências locais: {}",
+                project_root.join("references").display()
+            );
+            manifest.counts.insert("medicines".into(), 10);
+            Ok(())
+        });
+        run_catalog("cosmetics", &mut manifest, |manifest| {
+            manifest.counts.insert("cosmetics".into(), 3);
+            Err("interrupted download".into())
+        });
+        run_catalog("cannabis", &mut manifest, |manifest| {
+            manifest.counts.insert("cannabis".into(), 2);
+            Ok(())
+        });
+        assert_eq!(
+            manifest.counts,
+            BTreeMap::from([("medicines".into(), 10), ("cannabis".into(), 2)])
+        );
+        assert!(manifest.catalog_errors["cosmetics"].contains("interrupted download"));
+        assert!(manifest.timings_ms.contains_key("failed.cosmetics"));
+        let json = serde_json::to_value(&manifest).unwrap();
+        assert_eq!(
+            json["catalog_errors"]["cosmetics"],
+            manifest.catalog_errors["cosmetics"]
+        );
+        manifest.catalog_errors.clear();
+        assert!(
+            serde_json::to_value(&manifest)
+                .unwrap()
+                .get("catalog_errors")
+                .is_none()
+        );
+    }
 }

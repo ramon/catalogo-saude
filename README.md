@@ -22,10 +22,10 @@ mise exec -- cargo run --release -- --output ./runs/minha-coleta
 
 O comando exibe o andamento de cada fonte e etapa. Para escolher outro tamanho de lote, use `--batch-size` (o padrão é `1000`).
 
-Também é possível baixar o executável da [versão v0.2.0](https://github.com/ramon/catalogo-saude/releases/tag/v0.2.0), atualmente publicada para Linux x86_64 com GNU libc. Depois de extrair o pacote:
+Também é possível baixar o executável da [versão v0.2.1](https://github.com/ramon/catalogo-saude/releases/tag/v0.2.1), atualmente publicada para Linux x86_64 com GNU libc. Depois de extrair o pacote:
 
 ```sh
-./catalogo-saude-release-v0.2.0/catalogo-saude --output ./runs/minha-coleta
+./catalogo-saude-release-v0.2.1/catalogo-saude --output ./runs/minha-coleta
 ```
 
 O executável recebe as mesmas opções da CLI, por exemplo `--output` e `--batch-size`. Mantenha a pasta `references/` incluída no pacote junto ao executável; ela permite executar a coleta fora do repositório. As referências do pacote têm prioridade sobre as da pasta atual.
@@ -59,7 +59,13 @@ Guarde o diretório da coleta se quiser manter as fontes usadas. Para normalizar
 mise exec -- cargo run --release -- --output ./runs/minha-coleta --reuse-sources
 ```
 
-O loader valida o SHA-1 antes de reutilizar cada fonte. Se um arquivo preservado tiver sido alterado, a execução para em vez de usá-lo silenciosamente.
+O loader valida o SHA-1 antes de reutilizar cada fonte. Se um arquivo preservado tiver sido alterado, o catálogo correspondente falha em vez de usar esse arquivo silenciosamente; os demais continuam.
+
+Downloads interrompidos por falhas de conexão, corpo incompleto ou HTTP 408/429/500/502/503/504 são repetidos até quatro tentativas, com intervalos de 1, 2 e 4 segundos. Cada tentativa reinicia a transferência e descarta o arquivo parcial; somente downloads completos entram no controle. Erros permanentes, como HTTP 404 ou falta de permissão de escrita, não recebem essas tentativas.
+
+Uma falha de download, normalização ou gravação de um catálogo não interrompe os demais. O `manifest.json` é gravado ao final e inclui `catalog_errors`, um objeto com os erros por catálogo, somente quando houver falhas. As contagens do catálogo que falhou são omitidas; lotes existentes ou parciais desse catálogo não devem ser considerados uma geração concluída. SIGTAP, TUSS e CID-10 são processados como uma etapa conjunta, pois compartilham fontes e cruzamentos.
+
+A execução termina com código diferente de zero **depois de processar todos os catálogos**, se algum falhar. Para retomar aproveitando as fontes completas, execute novamente com o mesmo `--output` e `--reuse-sources`. A Portaria 344 é processada independentemente mesmo se medicamentos falhar; medicamentos precisam das listas para serem classificados.
 
 ## Listas da Portaria 344 nos medicamentos
 
