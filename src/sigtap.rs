@@ -110,13 +110,7 @@ pub fn normalize_sigtap(
             continue;
         }
         codes.insert(code.clone());
-        let subgroup = format!("{}{}", get(p, "CO_GRUPO"), get(p, "CO_SUB_GRUPO"));
-        let org = format!(
-            "{}{}{}",
-            get(p, "CO_GRUPO"),
-            get(p, "CO_SUB_GRUPO"),
-            get(p, "CO_FORMA_ORGANIZACAO")
-        );
+        let (subgroup, org) = procedure_hierarchy(p)?;
         let sg = subgroups.get(&subgroup);
         let og = organizations.get(&org);
         procs.push(json!({"sigtap_code":code,"name":get(p,"NO_PROCEDIMENTO"),"group_code":"02","group_name":get(group,"NO_GRUPO"),"subgroup_code":subgroup,"subgroup_name":sg.map(|r|get(r,"NO_SUB_GRUPO")).unwrap_or_default(),"organization_code":org,"organization_name":og.map(|r|get(r,"NO_FORMA_ORGANIZACAO")).unwrap_or_default(),"tuss_codes":[],"areas":[],"occupations":[],"attributes":{"source_fields":p}}));
@@ -170,6 +164,17 @@ pub fn normalize_sigtap(
     eprintln!("TUSS: {} vínculos SIGTAP e ANS", mappings.len());
     Ok((procs, mappings, cids, links))
 }
+
+fn procedure_hierarchy(
+    row: &HashMap<String, String>,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    let code = get(row, "CO_PROCEDIMENTO");
+    if code.len() != 10 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(format!("Código SIGTAP inválido: {code}").into());
+    }
+    Ok((code[..4].to_string(), code[..6].to_string()))
+}
+
 fn parse_ans_crosswalk(
     bytes: &[u8],
     diagnostic: &BTreeSet<String>,

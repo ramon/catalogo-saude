@@ -6,6 +6,11 @@ e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+### Corrigido
+
+- Deriva subgrupo e forma de organização SIGTAP dos prefixos do código do
+  procedimento, em vez de campos ausentes na tabela de procedimentos.
+
 ## [0.2.1] - 2026-10-02
 
 ### Corrigido
