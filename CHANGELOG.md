@@ -4,7 +4,12 @@ As mudanças relevantes do Catálogo Saúde estão registradas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/),
 e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
-## [Não lançado]
+## [0.2.2] - 2026-10-13
+
+### Adicionado
+
+- Opção `--catalog` para gerar somente um catálogo: `medicines`, `cosmetics`,
+  `cannabis`, `portaria_344` ou `sigtap`.
 
 ### Corrigido
 
@@ -58,7 +63,8 @@ e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
   Anvisa.
 - Binário para Linux x86_64 com GNU libc.
 
-[Não lançado]: https://github.com/ramon/catalogo-saude/compare/v0.2.1...HEAD
+[0.2.2]: https://github.com/ramon/catalogo-saude/compare/v0.2.1...v0.2.2
+[Não lançado]: https://github.com/ramon/catalogo-saude/compare/v0.2.2...HEAD
 [0.1.0]: https://github.com/ramon/catalogo-saude/releases/tag/v0.1.0
 
 [0.2.0]: https://github.com/ramon/catalogo-saude/compare/v0.1.0...v0.2.0

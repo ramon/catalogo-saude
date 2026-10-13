@@ -8,7 +8,7 @@ mod sigtap;
 
 use anvisa::{normalize_cannabis, normalize_medicines, normalize_portaria};
 use chrono::Utc;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use cosmetics::normalize_cosmetics;
 use downloads::{
     ANS, CANNABIS, COSMETICS, DownloadControl, MED_CONSULT, MED_OPEN, MED_PRICES, Manifest,
@@ -35,6 +35,34 @@ struct Args {
         help = "Reutiliza fontes brutas listadas em download-control.json quando disponíveis"
     )]
     reuse_sources: bool,
+    #[arg(
+        long,
+        value_enum,
+        help = "Gera somente os arquivos do catálogo selecionado"
+    )]
+    catalog: Option<Catalog>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum Catalog {
+    Medicines,
+    Cosmetics,
+    Cannabis,
+    #[value(name = "portaria_344")]
+    Portaria344,
+    Sigtap,
+}
+
+impl Catalog {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Medicines => "medicines",
+            Self::Cosmetics => "cosmetics",
+            Self::Cannabis => "cannabis",
+            Self::Portaria344 => "portaria_344",
+            Self::Sigtap => "sigtap",
+        }
+    }
 }
 
 fn reference_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -61,10 +89,15 @@ fn reference_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 fn run_catalog(
-    name: &str,
+    catalog: Catalog,
+    selected_catalog: Option<Catalog>,
     manifest: &mut Manifest,
     job: impl FnOnce(&mut Manifest) -> Result<(), Box<dyn std::error::Error>>,
 ) {
+    if selected_catalog.is_some_and(|selected| selected != catalog) {
+        return;
+    }
+    let name = catalog.name();
     let previous_counts = manifest.counts.clone();
     let started = Instant::now();
     if let Err(error) = job(manifest) {
@@ -117,99 +150,109 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         catalog_errors: BTreeMap::new(),
     };
     let mut portaria_rows = None;
-    run_catalog("medicines", &mut manifest, |manifest| {
-        let project_root = reference_root()?;
-        eprintln!(
-            "Referências locais: {}",
-            project_root.join("references").display()
-        );
-        eprintln!("[1/5] Medicamentos: obtenção e cruzamento das três fontes");
-        let med_open = fetch(
-            &client,
-            "medicines_open",
-            MED_OPEN,
-            args.reuse_sources,
-            &args.output,
-            manifest,
-            &mut download_control,
-        )?;
-        let med_consult = fetch(
-            &client,
-            "medicines_consultation",
-            MED_CONSULT,
-            args.reuse_sources,
-            &args.output,
-            manifest,
-            &mut download_control,
-        )?;
-        let med_prices = fetch(
-            &client,
-            "medicines_prices",
-            MED_PRICES,
-            args.reuse_sources,
-            &args.output,
-            manifest,
-            &mut download_control,
-        )?;
-
-        eprintln!("Portaria 344: obtenção das listas para classificação dos medicamentos");
-        let portaria = fetch(
-            &client,
-            "portaria_344",
-            PORTARIA,
-            args.reuse_sources,
-            &args.output,
-            manifest,
-            &mut download_control,
-        )?;
-        let phase_started = Instant::now();
-        portaria_rows = Some(normalize_portaria(&portaria)?);
-        drop(portaria);
-        record_phase(manifest, "normalize.portaria_344", phase_started);
-        let phase_started = Instant::now();
-        let medicine_rows = normalize_medicines(
-            &med_open,
-            &med_consult,
-            &med_prices,
-            &project_root,
-            portaria_rows
-                .as_deref()
-                .ok_or("Listas da Portaria 344 indisponíveis")?,
-        )?;
-        drop((med_open, med_consult, med_prices));
-        manifest.counts.insert(
-            "medicines".into(),
-            write_batches_by_status(
+    run_catalog(
+        Catalog::Medicines,
+        args.catalog,
+        &mut manifest,
+        |manifest| {
+            let project_root = reference_root()?;
+            eprintln!(
+                "Referências locais: {}",
+                project_root.join("references").display()
+            );
+            eprintln!("[1/5] Medicamentos: obtenção e cruzamento das três fontes");
+            let med_open = fetch(
+                &client,
+                "medicines_open",
+                MED_OPEN,
+                args.reuse_sources,
                 &args.output,
-                "medicines",
-                medicine_rows,
-                args.batch_size,
-                "Ativo",
-                "Inativo",
-            )?,
-        );
-        record_phase(manifest, "normalize_and_write.medicines", phase_started);
+                manifest,
+                &mut download_control,
+            )?;
+            let med_consult = fetch(
+                &client,
+                "medicines_consultation",
+                MED_CONSULT,
+                args.reuse_sources,
+                &args.output,
+                manifest,
+                &mut download_control,
+            )?;
+            let med_prices = fetch(
+                &client,
+                "medicines_prices",
+                MED_PRICES,
+                args.reuse_sources,
+                &args.output,
+                manifest,
+                &mut download_control,
+            )?;
 
-        Ok(())
-    });
-    run_catalog("cosmetics", &mut manifest, |manifest| {
-        eprintln!("[2/5] Cosméticos");
-        let cosmetics = fetch_file(
-            &client,
-            "cosmetics",
-            COSMETICS,
-            args.reuse_sources,
-            &args.output,
-            manifest,
-            &mut download_control,
-        )?;
-        let phase_started = Instant::now();
-        let cosmetic_count = normalize_cosmetics(&cosmetics, &args.output, args.batch_size)?;
-        manifest.counts.insert("cosmetics".into(), cosmetic_count);
-        record_phase(manifest, "normalize_and_write.cosmetics", phase_started);
-        Ok(())
-    });
-    run_catalog("cannabis", &mut manifest, |manifest| {
+            eprintln!("Portaria 344: obtenção das listas para classificação dos medicamentos");
+            let portaria = fetch(
+                &client,
+                "portaria_344",
+                PORTARIA,
+                args.reuse_sources,
+                &args.output,
+                manifest,
+                &mut download_control,
+            )?;
+            let phase_started = Instant::now();
+            portaria_rows = Some(normalize_portaria(&portaria)?);
+            drop(portaria);
+            record_phase(manifest, "normalize.portaria_344", phase_started);
+            let phase_started = Instant::now();
+            let medicine_rows = normalize_medicines(
+                &med_open,
+                &med_consult,
+                &med_prices,
+                &project_root,
+                portaria_rows
+                    .as_deref()
+                    .ok_or("Listas da Portaria 344 indisponíveis")?,
+            )?;
+            drop((med_open, med_consult, med_prices));
+            manifest.counts.insert(
+                "medicines".into(),
+                write_batches_by_status(
+                    &args.output,
+                    "medicines",
+                    medicine_rows,
+                    args.batch_size,
+                    "Ativo",
+                    "Inativo",
+                )?,
+            );
+            record_phase(manifest, "normalize_and_write.medicines", phase_started);
+
+            Ok(())
+        },
+    );
+    run_catalog(
+        Catalog::Cosmetics,
+        args.catalog,
+        &mut manifest,
+        |manifest| {
+            eprintln!("[2/5] Cosméticos");
+            let cosmetics = fetch_file(
+                &client,
+                "cosmetics",
+                COSMETICS,
+                args.reuse_sources,
+                &args.output,
+                manifest,
+                &mut download_control,
+            )?;
+            let phase_started = Instant::now();
+            let cosmetic_count = normalize_cosmetics(&cosmetics, &args.output, args.batch_size)?;
+            manifest.counts.insert("cosmetics".into(), cosmetic_count);
+            record_phase(manifest, "normalize_and_write.cosmetics", phase_started);
+            Ok(())
+        },
+    );
+    run_catalog(Catalog::Cannabis, args.catalog, &mut manifest, |manifest| {
         eprintln!("[3/5] Produtos de cannabis");
         let cannabis = fetch(
             &client,
@@ -238,38 +281,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Ok(())
     });
-    run_catalog("portaria_344", &mut manifest, |manifest| {
-        eprintln!("[4/5] Portaria 344: gravação das listas");
-        if portaria_rows.is_none() {
-            let raw = fetch(
-                &client,
-                "portaria_344",
-                PORTARIA,
-                args.reuse_sources,
-                &args.output,
-                manifest,
-                &mut download_control,
-            )?;
-            let started = Instant::now();
-            portaria_rows = Some(normalize_portaria(&raw)?);
-            record_phase(manifest, "normalize.portaria_344", started);
-        }
-        let phase_started = Instant::now();
-        manifest.counts.insert(
-            "portaria_344_lists".into(),
-            write_batches(
-                &args.output,
-                "portaria-344/lists",
-                portaria_rows
-                    .take()
-                    .ok_or("Listas da Portaria 344 indisponíveis")?,
-                args.batch_size,
-            )?,
-        );
-        record_phase(manifest, "normalize_and_write.portaria_344", phase_started);
-        Ok(())
-    });
-    run_catalog("sigtap", &mut manifest, |manifest| {
+    run_catalog(
+        Catalog::Portaria344,
+        args.catalog,
+        &mut manifest,
+        |manifest| {
+            eprintln!("[4/5] Portaria 344: gravação das listas");
+            if portaria_rows.is_none() {
+                let raw = fetch(
+                    &client,
+                    "portaria_344",
+                    PORTARIA,
+                    args.reuse_sources,
+                    &args.output,
+                    manifest,
+                    &mut download_control,
+                )?;
+                let started = Instant::now();
+                portaria_rows = Some(normalize_portaria(&raw)?);
+                record_phase(manifest, "normalize.portaria_344", started);
+            }
+            let phase_started = Instant::now();
+            manifest.counts.insert(
+                "portaria_344_lists".into(),
+                write_batches(
+                    &args.output,
+                    "portaria-344/lists",
+                    portaria_rows
+                        .take()
+                        .ok_or("Listas da Portaria 344 indisponíveis")?,
+                    args.batch_size,
+                )?,
+            );
+            record_phase(manifest, "normalize_and_write.portaria_344", phase_started);
+            Ok(())
+        },
+    );
+    run_catalog(Catalog::Sigtap, args.catalog, &mut manifest, |manifest| {
         eprintln!("[5/5] SIGTAP, TUSS e CID-10");
         let sigtap = fetch(
             &client,
@@ -369,7 +417,7 @@ mod tests {
             total_elapsed_ms: 0,
             catalog_errors: BTreeMap::new(),
         };
-        run_catalog("medicines", &mut manifest, |manifest| {
+        run_catalog(Catalog::Medicines, None, &mut manifest, |manifest| {
             let project_root = reference_root()?;
             eprintln!(
                 "Referências locais: {}",
@@ -378,11 +426,11 @@ mod tests {
             manifest.counts.insert("medicines".into(), 10);
             Ok(())
         });
-        run_catalog("cosmetics", &mut manifest, |manifest| {
+        run_catalog(Catalog::Cosmetics, None, &mut manifest, |manifest| {
             manifest.counts.insert("cosmetics".into(), 3);
             Err("interrupted download".into())
         });
-        run_catalog("cannabis", &mut manifest, |manifest| {
+        run_catalog(Catalog::Cannabis, None, &mut manifest, |manifest| {
             manifest.counts.insert("cannabis".into(), 2);
             Ok(())
         });

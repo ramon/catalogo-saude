@@ -22,10 +22,12 @@ mise exec -- cargo run --release -- --output ./runs/minha-coleta
 
 O comando exibe o andamento de cada fonte e etapa. Para escolher outro tamanho de lote, use `--batch-size` (o padrão é `1000`).
 
-Também é possível baixar o executável da [versão v0.2.1](https://github.com/ramon/catalogo-saude/releases/tag/v0.2.1), atualmente publicada para Linux x86_64 com GNU libc. Depois de extrair o pacote:
+Para gerar somente um catálogo, use `--catalog` com um dos valores `medicines`, `cosmetics`, `cannabis`, `portaria_344` ou `sigtap`. Por exemplo, `--catalog cosmetics` processa apenas cosméticos.
+
+Também é possível baixar o executável da [versão v0.2.2](https://github.com/ramon/catalogo-saude/releases/tag/v0.2.2), publicada para Linux x86_64 com GNU libc. Depois de extrair o pacote:
 
 ```sh
-./catalogo-saude-release-v0.2.1/catalogo-saude --output ./runs/minha-coleta
+./catalogo-saude-release-v0.2.2/catalogo-saude --output ./runs/minha-coleta
 ```
 
 O executável recebe as mesmas opções da CLI, por exemplo `--output` e `--batch-size`. Mantenha a pasta `references/` incluída no pacote junto ao executável; ela permite executar a coleta fora do repositório. As referências do pacote têm prioridade sobre as da pasta atual.
