@@ -4,6 +4,21 @@ As mudanças relevantes do Catálogo Saúde estão registradas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/),
 e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
+## [0.3.0] - 2026-10-15
+
+### Adicionado
+
+- Coleta do catálogo de produtos farmacêuticos veterinários do MAPA via HTTP,
+  WebSocket JSON-RPC e exportação XLSX do painel Qlik Sense.
+- Normalização dos produtos MAPA na estrutura comum com `presentations`,
+  preservando dados veterinários específicos e datas de registro.
+- Opção `--catalog mapa_veterinary`.
+
+### Corrigido
+
+- Expõe `Modo de Uso` como `directions` no produto normalizado, ao lado de
+  `Indicação` (`indications`).
+
 ## [0.2.2] - 2026-10-13
 
 ### Adicionado
@@ -63,8 +78,9 @@ e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
   Anvisa.
 - Binário para Linux x86_64 com GNU libc.
 
+[0.3.0]: https://github.com/ramon/catalogo-saude/compare/v0.2.2...v0.3.0
+[Não lançado]: https://github.com/ramon/catalogo-saude/compare/v0.3.0...HEAD
 [0.2.2]: https://github.com/ramon/catalogo-saude/compare/v0.2.1...v0.2.2
-[Não lançado]: https://github.com/ramon/catalogo-saude/compare/v0.2.2...HEAD
 [0.1.0]: https://github.com/ramon/catalogo-saude/releases/tag/v0.1.0
 
 [0.2.0]: https://github.com/ramon/catalogo-saude/compare/v0.1.0...v0.2.0

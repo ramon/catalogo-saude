@@ -8,6 +8,7 @@ O Catálogo Saúde reúne dados públicos de medicamentos e outros catálogos de
 - **Cosméticos e produtos de cannabis:** consulta de produtos da Anvisa.
 - **Portaria 344:** listas de substâncias sujeitas a controle especial.
 - **SIGTAP, TUSS e CID-10:** procedimentos, vínculos com a TUSS e códigos CID-10.
+- **Produtos farmacêuticos veterinários:** catálogo público do MAPA exportado do painel Qlik Sense.
 
 O catálogo DCB não faz parte desta coleta. Arquivos regulatórios já mantidos em `references/anvisa/` são usados localmente.
 
@@ -22,12 +23,12 @@ mise exec -- cargo run --release -- --output ./runs/minha-coleta
 
 O comando exibe o andamento de cada fonte e etapa. Para escolher outro tamanho de lote, use `--batch-size` (o padrão é `1000`).
 
-Para gerar somente um catálogo, use `--catalog` com um dos valores `medicines`, `cosmetics`, `cannabis`, `portaria_344` ou `sigtap`. Por exemplo, `--catalog cosmetics` processa apenas cosméticos.
+Para gerar somente um catálogo, use `--catalog` com um dos valores `medicines`, `cosmetics`, `cannabis`, `portaria_344`, `sigtap` ou `mapa_veterinary`. Por exemplo, `--catalog cosmetics` processa apenas cosméticos.
 
-Também é possível baixar o executável da [versão v0.2.2](https://github.com/ramon/catalogo-saude/releases/tag/v0.2.2), publicada para Linux x86_64 com GNU libc. Depois de extrair o pacote:
+Também é possível baixar o executável da [versão v0.3.0](https://github.com/ramon/catalogo-saude/releases/tag/v0.3.0), publicada para Linux x86_64 com GNU libc. O pacote `catalogo-saude-v0.3.0-x86_64-unknown-linux-gnu.tar.gz` inclui o executável e as referências necessárias. Depois de extrair o pacote:
 
 ```sh
-./catalogo-saude-release-v0.2.2/catalogo-saude --output ./runs/minha-coleta
+./catalogo-saude-release-v0.3.0/catalogo-saude --output ./runs/minha-coleta
 ```
 
 O executável recebe as mesmas opções da CLI, por exemplo `--output` e `--batch-size`. Mantenha a pasta `references/` incluída no pacote junto ao executável; ela permite executar a coleta fora do repositório. As referências do pacote têm prioridade sobre as da pasta atual.
@@ -51,9 +52,11 @@ cannabis/ativo/batch-000001.json
 cannabis/inativos/batch-000001.json
 ```
 
+O MAPA gera `mapa-veterinary/products/batch-000001.json` com a estrutura comum de produto e `presentations` usada em medicamentos. Cada apresentação vem de `Apresentação do Produto`; concentração, EAN, GGREM e preço ficam `null`, pois a fonte não os informa. `Indicação` e `Modo de Uso` são preservados em `indications` e `directions`. Outros dados específicos de veterinária, como espécies, via de administração, advertências e datas de registro, ficam em `veterinary_details`; datas seriais do Excel são convertidas para `AAAA-MM-DD`. Campos sem correspondência mantêm `null` ou arrays vazios, sem inferências. O arquivo XLSX bruto fica em `sources/` e entra em `download-control.json`; como o link `qUrl` expira, a exportação é sempre gerada e baixada na mesma execução, inclusive com `--reuse-sources`.
+
 A pasta `ativo/` recebe medicamentos com situação `Ativo`, cosméticos com `S` e cannabis com `Válido`. A pasta `inativos/` recebe, respectivamente, `Inativo`, `N` e `Caduco/Cancelado`. Os valores de `regulatory_status` são preservados nos registros; situações desconhecidas interrompem a execução.
 
-Cada pasta possui numeração própria, com até mil registros por lote por padrão. As duas pastas são criadas mesmo quando uma delas estiver vazia. Ao reprocessar, são removidos os lotes antigos dessas pastas e, após a gravação, os lotes do formato anterior diretamente na pasta do catálogo. Outros arquivos são preservados. Portaria 344 e SIGTAP continuam em `portaria-344/lists/` e `sigtap/`.
+Cada pasta possui numeração própria, com até mil registros por lote por padrão. As duas pastas são criadas mesmo quando uma delas estiver vazia. Ao reprocessar, são removidos os lotes antigos dessas pastas e, após a gravação, os lotes do formato anterior diretamente na pasta do catálogo. Outros arquivos são preservados. Portaria 344, SIGTAP e MAPA continuam em `portaria-344/lists/`, `sigtap/` e `mapa-veterinary/products/`.
 
 Guarde o diretório da coleta se quiser manter as fontes usadas. Para normalizar novamente usando esses downloads, informe o mesmo diretório e `--reuse-sources`:
 
@@ -140,6 +143,7 @@ O script usa as mesmas fontes preservadas e lotes de 1.000 registros. Registra t
 - [Portaria SVS/MS nº 344/1998](https://anvisalegis.datalegis.net/)
 - [Tabelas SIGTAP](https://github.com/RenatoKR/SIGTAP)
 - [Tabelas TISS da ANS](https://www.gov.br/ans/pt-br/assuntos/prestadores/padrao-para-troca-de-informacao-de-saude-suplementar-tiss)
+- [Produtos farmacêuticos veterinários do MAPA](https://mapa-indicadores.agricultura.gov.br/publico/extensions/Produtos_Farmaceuticos/Produtos_Farmaceuticos.html)
 
 ## Licença
 

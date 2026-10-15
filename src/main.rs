@@ -1,6 +1,7 @@
 mod anvisa;
 mod cosmetics;
 mod downloads;
+mod mapa;
 mod output;
 mod portaria;
 mod prescription;
@@ -51,6 +52,8 @@ enum Catalog {
     #[value(name = "portaria_344")]
     Portaria344,
     Sigtap,
+    #[value(name = "mapa_veterinary")]
+    MapaVeterinary,
 }
 
 impl Catalog {
@@ -61,6 +64,7 @@ impl Catalog {
             Self::Cannabis => "cannabis",
             Self::Portaria344 => "portaria_344",
             Self::Sigtap => "sigtap",
+            Self::MapaVeterinary => "mapa_veterinary",
         }
     }
 }
@@ -135,9 +139,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             files: Vec::new(),
         }
     };
+    let cookie_jar = std::sync::Arc::new(reqwest::cookie::Jar::default());
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(180))
         .connect_timeout(Duration::from_secs(30))
+        .cookie_provider(cookie_jar.clone())
         .user_agent(concat!("catalogo-saude/", env!("CARGO_PKG_VERSION")))
         .build()?;
     let mut manifest = Manifest {
@@ -160,7 +166,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "Referências locais: {}",
                 project_root.join("references").display()
             );
-            eprintln!("[1/5] Medicamentos: obtenção e cruzamento das três fontes");
+            eprintln!("[1/6] Medicamentos: obtenção e cruzamento das três fontes");
             let med_open = fetch(
                 &client,
                 "medicines_open",
@@ -235,7 +241,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.catalog,
         &mut manifest,
         |manifest| {
-            eprintln!("[2/5] Cosméticos");
+            eprintln!("[2/6] Cosméticos");
             let cosmetics = fetch_file(
                 &client,
                 "cosmetics",
@@ -253,7 +259,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
     run_catalog(Catalog::Cannabis, args.catalog, &mut manifest, |manifest| {
-        eprintln!("[3/5] Produtos de cannabis");
+        eprintln!("[3/6] Produtos de cannabis");
         let cannabis = fetch(
             &client,
             "cannabis",
@@ -286,7 +292,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.catalog,
         &mut manifest,
         |manifest| {
-            eprintln!("[4/5] Portaria 344: gravação das listas");
+            eprintln!("[4/6] Portaria 344: gravação das listas");
             if portaria_rows.is_none() {
                 let raw = fetch(
                     &client,
@@ -318,7 +324,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
     run_catalog(Catalog::Sigtap, args.catalog, &mut manifest, |manifest| {
-        eprintln!("[5/5] SIGTAP, TUSS e CID-10");
+        eprintln!("[5/6] SIGTAP, TUSS e CID-10");
         let sigtap = fetch(
             &client,
             "sigtap",
@@ -378,6 +384,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         Ok(())
     });
+    run_catalog(
+        Catalog::MapaVeterinary,
+        args.catalog,
+        &mut manifest,
+        |manifest| {
+            eprintln!("[6/6] Produtos farmacêuticos veterinários do MAPA");
+            let phase_started = Instant::now();
+            let rows = mapa::collect(
+                &client,
+                &cookie_jar,
+                &args.output,
+                manifest,
+                &mut download_control,
+            )?;
+            manifest.counts.insert(
+                "mapa_veterinary_products".into(),
+                write_batches(
+                    &args.output,
+                    "mapa-veterinary/products",
+                    rows,
+                    args.batch_size,
+                )?,
+            );
+            record_phase(
+                manifest,
+                "collect_normalize_and_write.mapa_veterinary",
+                phase_started,
+            );
+            Ok(())
+        },
+    );
     manifest.total_elapsed_ms = run_started.elapsed().as_millis();
     eprintln!(
         "Tempo total da coleta: {:.3}s",

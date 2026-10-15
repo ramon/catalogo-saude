@@ -199,6 +199,56 @@ pub fn fetch_file(
     Ok(path)
 }
 
+/// Preserves a dynamically generated source file and records it in the same
+/// controls used by ordinary downloads. The supplied URL should identify the
+/// stable source page because temporary export URLs expire after each run.
+pub fn save_source_bytes(
+    name: &str,
+    extension: &str,
+    source_url: &str,
+    bytes: &[u8],
+    download_elapsed_ms: u128,
+    output: &Path,
+    manifest: &mut Manifest,
+    download_control: &mut DownloadControl,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let downloaded_at = Utc::now();
+    let filename = format!(
+        "sources/{}-{}.{}",
+        name,
+        downloaded_at.format("%Y%m%dT%H%M%S%.3fZ"),
+        extension
+    );
+    let path = output.join(&filename);
+    write_atomic(&path, bytes)?;
+    let digest = hash_source(std::io::Cursor::new(bytes), None)?;
+    download_control.files.push(DownloadedFile {
+        name: name.into(),
+        filename,
+        downloaded_at: downloaded_at.to_rfc3339(),
+        sha1: digest.sha1,
+    });
+    write_atomic(
+        &output.join("download-control.json"),
+        &serde_json::to_vec_pretty(download_control)?,
+    )?;
+    manifest.sources.insert(
+        name.into(),
+        SourceInfo {
+            url: source_url.into(),
+            sha256: digest.sha256.clone(),
+            bytes: digest.bytes,
+            download_elapsed_ms,
+            reused_from_disk: false,
+        },
+    );
+    eprintln!(
+        "Recebido e preservado {name}: {} bytes, sha256 {}",
+        digest.bytes, digest.sha256
+    );
+    Ok(path)
+}
+
 fn retryable_download_error(error: &(dyn std::error::Error + 'static)) -> bool {
     if let Some(error) = error.downcast_ref::<reqwest::Error>() {
         if let Some(status) = error.status() {
