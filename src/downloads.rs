@@ -19,6 +19,8 @@ pub const COSMETICS: &str =
 pub const CANNABIS: &str =
     "https://dados.anvisa.gov.br/dados/CONSULTAS/PRODUTOS/TA_CONSULTA_PRODUTOS_CANNABIS.CSV";
 pub const PORTARIA: &str = "https://anvisalegis.datalegis.net/action/ActionDatalegis.php?acao=abrirTextoAto&cod_menu=8542&cod_modulo=310&link=S&numeroAto=00000344&orgao=SVS%2FMS&seqAto=000&tipo=POR&valorAno=1998";
+pub const MAPA_CONTROLLED_SUBSTANCES: &str =
+    "https://www.in.gov.br/web/dou/-/portaria-mapa-n-837-de-23-de-setembro-de-2025-679029448";
 pub const SIGTAP: &str = "https://github.com/RenatoKR/SIGTAP/raw/refs/heads/main/tabelas/TabelaUnificada_202608_v2608141139.zip";
 pub const ANS: &str = "https://www.gov.br/ans/pt-br/arquivos/assuntos/prestadores/padrao-para-troca-de-informacao-de-saude-suplementar-tiss/padrao-tiss-tabelas-relacionadas/padraotiss_mapeamento_tuss_sigtap.zip";
 
@@ -124,7 +126,7 @@ pub fn fetch_file(
     eprintln!("Baixando {name}: {url}");
     let downloaded_at = Utc::now();
     let extension = match name {
-        "portaria_344" => "html",
+        "portaria_344" | "mapa_controlled_substances" => "html",
         "sigtap" | "ans_tuss_sigtap" => "zip",
         _ => "csv",
     };

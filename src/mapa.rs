@@ -2,7 +2,9 @@ use crate::downloads::{DownloadControl, Manifest, save_source_bytes};
 use calamine::{Data, Reader, open_workbook_auto};
 use chrono::{Duration as ChronoDuration, NaiveDate};
 use rand::{Rng, distr::Alphanumeric};
+use regex::Regex;
 use reqwest::cookie::CookieStore;
+use scraper::{Html, Selector};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -19,10 +21,144 @@ const APP_ID: &str = "ab6f1c23-f41e-4977-8457-8d2a1d87054a";
 const WS_URL: &str =
     "wss://mapa-indicadores.agricultura.gov.br/publico/app/ab6f1c23-f41e-4977-8457-8d2a1d87054a";
 const TIMEOUT: Duration = Duration::from_secs(60);
+const CONTROLLED_LIST_CODES: &[&str] = &["A1", "A2", "A3", "B1", "C1", "C2", "C5"];
+
+pub fn normalize_controlled_substances(
+    bytes: &[u8],
+) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+    let html = Html::parse_document(&String::from_utf8_lossy(bytes));
+    let selector = Selector::parse("p, tr, li, h1, h2, h3, h4")?;
+    let header = Regex::new(r"(?i)^LISTA\s+([A-Z]\d+)\s*:\s*(.+)$")?;
+    let mut in_annex = false;
+    let mut current: Option<(String, String, BTreeSet<String>)> = None;
+    let mut lists = Vec::new();
+
+    for element in html.select(&selector) {
+        let text = element
+            .text()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if text.is_empty() {
+            continue;
+        }
+        let normalized = crate::portaria::normalize_text(&text);
+        if normalized == "ANEXO I" {
+            in_annex = true;
+            continue;
+        }
+        if normalized.starts_with("ANEXO II") {
+            break;
+        }
+        if !in_annex {
+            continue;
+        }
+        if let Some(captures) = header.captures(&text) {
+            if let Some((code, title, names)) = current.take() {
+                lists.push(json!({
+                    "code": code,
+                    "title": title,
+                    "entries": names.into_iter().map(|name| json!({"name": name})).collect::<Vec<_>>(),
+                }));
+            }
+            current = Some((
+                captures[1].to_uppercase(),
+                captures[2].trim().into(),
+                BTreeSet::new(),
+            ));
+            continue;
+        }
+        if let Some((_, _, names)) = current.as_mut() {
+            if !normalized
+                .chars()
+                .all(|character| character.is_ascii_digit())
+            {
+                names.insert(text);
+            }
+        }
+    }
+    if let Some((code, title, names)) = current {
+        lists.push(json!({
+            "code": code,
+            "title": title,
+            "entries": names.into_iter().map(|name| json!({"name": name})).collect::<Vec<_>>(),
+        }));
+    }
+
+    let found = lists
+        .iter()
+        .filter_map(|list| list["code"].as_str())
+        .collect::<BTreeSet<_>>();
+    let missing = CONTROLLED_LIST_CODES
+        .iter()
+        .filter(|code| !found.contains(**code))
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "Anexo I da Portaria MAPA nº 837/2025 incompleto; listas não encontradas: {}",
+            missing.join(", ")
+        )
+        .into());
+    }
+    Ok(lists)
+}
+
+struct MapaControlledClassifier {
+    lists: Vec<(String, BTreeSet<String>)>,
+}
+
+impl MapaControlledClassifier {
+    fn new(lists: &[Value]) -> Self {
+        let lists = lists
+            .iter()
+            .filter_map(|list| {
+                let code = list["code"].as_str()?.to_owned();
+                let names = list["entries"]
+                    .as_array()?
+                    .iter()
+                    .filter_map(|entry| entry["name"].as_str())
+                    .map(crate::portaria::normalize_text)
+                    .filter(|name| !name.is_empty())
+                    .collect();
+                Some((code, names))
+            })
+            .collect();
+        Self { lists }
+    }
+
+    fn classify(&self, ingredients: &[String]) -> Vec<String> {
+        let ingredients = ingredients
+            .iter()
+            .map(|name| crate::portaria::normalize_text(name))
+            .filter(|name| !name.is_empty())
+            .collect::<BTreeSet<_>>();
+        self.lists
+            .iter()
+            .filter(|(_, names)| {
+                ingredients.iter().any(|ingredient| {
+                    names.iter().any(|name| {
+                        contains_term(ingredient, name) || contains_term(name, ingredient)
+                    })
+                })
+            })
+            .map(|(code, _)| code.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+}
+
+fn contains_term(text: &str, term: &str) -> bool {
+    !term.is_empty() && format!(" {text} ").contains(&format!(" {term} "))
+}
 
 pub fn collect(
     client: &reqwest::blocking::Client,
     jar: &reqwest::cookie::Jar,
+    controlled_lists: &[Value],
     output: &Path,
     manifest: &mut Manifest,
     download_control: &mut DownloadControl,
@@ -126,7 +262,7 @@ pub fn collect(
             "O XLSX de produtos farmacêuticos veterinários do MAPA não contém registros".into(),
         );
     }
-    let rows = normalize_products(raw_rows)?;
+    let rows = normalize_products(raw_rows, controlled_lists)?;
     eprintln!(
         "MAPA: {} registros em {:.3}s",
         rows.len(),
@@ -135,7 +271,11 @@ pub fn collect(
     Ok(rows)
 }
 
-fn normalize_products(rows: Vec<Value>) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+fn normalize_products(
+    rows: Vec<Value>,
+    controlled_lists: &[Value],
+) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+    let classifier = MapaControlledClassifier::new(controlled_lists);
     rows.into_iter()
         .map(|row| {
             let registration = field(&row, "Registro do Produto");
@@ -150,6 +290,7 @@ fn normalize_products(rows: Vec<Value>) -> Result<Vec<Value>, Box<dyn std::error
             let presentation_text = field(&row, "Apresentação do Produto");
             let pharmaceutical_form = null_if_placeholder(field(&row, "Forma Farmacêutica"));
             let active_ingredients = split_values(field(&row, "IFA´s"));
+            let controlled_substance_lists = classifier.classify(&active_ingredients);
             let presentations = split_presentations(&presentation_text)
                 .into_iter()
                 .map(|description| {
@@ -218,6 +359,7 @@ fn normalize_products(rows: Vec<Value>) -> Result<Vec<Value>, Box<dyn std::error
                 "regulatory_restrictions": [],
                 "regulatory_restriction_types": [],
                 "portaria_344_lists": [],
+                "mapa_controlled_substance_lists": controlled_substance_lists,
                 "sncr_prescription_types": [],
                 "tarja": [],
                 "fractional_dispensing": [],

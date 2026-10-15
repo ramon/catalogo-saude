@@ -4,6 +4,14 @@ As mudanças relevantes do Catálogo Saúde estão registradas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/),
 e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
+## [0.4.0] - 2026-10-15
+
+### Adicionado
+
+- Cruzamento dos princípios ativos dos produtos veterinários com as listas de
+  substâncias controladas da Portaria MAPA nº 837/2025, em
+  `mapa_controlled_substance_lists`.
+
 ## [0.3.0] - 2026-10-15
 
 ### Adicionado
@@ -79,7 +87,7 @@ e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - Binário para Linux x86_64 com GNU libc.
 
 [0.3.0]: https://github.com/ramon/catalogo-saude/compare/v0.2.2...v0.3.0
-[Não lançado]: https://github.com/ramon/catalogo-saude/compare/v0.3.0...HEAD
+[0.4.0]: https://github.com/ramon/catalogo-saude/compare/v0.3.0...v0.4.0
 [0.2.2]: https://github.com/ramon/catalogo-saude/compare/v0.2.1...v0.2.2
 [0.1.0]: https://github.com/ramon/catalogo-saude/releases/tag/v0.1.0
 
