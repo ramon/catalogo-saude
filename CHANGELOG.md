@@ -4,6 +4,28 @@ As mudanças relevantes do Catálogo Saúde estão registradas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/),
 e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
+## [0.5.0] - 2026-10-19
+
+### Adicionado
+
+- Exportação dos campos `CS_GRUPO_CONTROLE` e `ST_INSUMO_CONTROLADO_PRODUTO`
+  do Qlik, agregados por linha para preservar produtos com múltiplos grupos.
+- Campos `is_controlled`, `control_groups` e `controlled_ingredient_flags` em
+  `veterinary_details`, usando exclusivamente informações da fonte.
+
+### Alterado
+
+- Removidos o download e o cruzamento com a Portaria MAPA nº 837/2025.
+  `mapa_controlled_substance_lists` permanece vazio para preservar o formato;
+  consumidores devem usar os novos campos de `veterinary_details`.
+- Grupos do Qlik preservados sem conversão de B para B1; ausência de informação
+  de controle representada por `is_controlled: null`.
+
+### Corrigido
+
+- Testes de isolamento atualizados para os seis catálogos, sem pressupor que
+  apenas as oito fontes da fixture existam após a execução.
+
 ## [0.4.0] - 2026-10-15
 
 ### Adicionado
@@ -86,6 +108,7 @@ e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
   Anvisa.
 - Binário para Linux x86_64 com GNU libc.
 
+[0.5.0]: https://github.com/ramon/catalogo-saude/compare/v0.4.0...v0.5.0
 [0.3.0]: https://github.com/ramon/catalogo-saude/compare/v0.2.2...v0.3.0
 [0.4.0]: https://github.com/ramon/catalogo-saude/compare/v0.3.0...v0.4.0
 [0.2.2]: https://github.com/ramon/catalogo-saude/compare/v0.2.1...v0.2.2

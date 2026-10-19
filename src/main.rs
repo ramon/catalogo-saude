@@ -12,8 +12,8 @@ use chrono::Utc;
 use clap::{Parser, ValueEnum};
 use cosmetics::normalize_cosmetics;
 use downloads::{
-    ANS, CANNABIS, COSMETICS, DownloadControl, MAPA_CONTROLLED_SUBSTANCES, MED_CONSULT, MED_OPEN,
-    MED_PRICES, Manifest, PORTARIA, SIGTAP, fetch, fetch_file, record_phase,
+    ANS, CANNABIS, COSMETICS, DownloadControl, MED_CONSULT, MED_OPEN, MED_PRICES, Manifest,
+    PORTARIA, SIGTAP, fetch, fetch_file, record_phase,
 };
 use output::{write_atomic, write_batches, write_batches_by_status};
 use sigtap::normalize_sigtap;
@@ -391,20 +391,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         |manifest| {
             eprintln!("[6/6] Produtos farmacêuticos veterinários do MAPA");
             let phase_started = Instant::now();
-            let controlled_substances = fetch(
-                &client,
-                "mapa_controlled_substances",
-                MAPA_CONTROLLED_SUBSTANCES,
-                args.reuse_sources,
-                &args.output,
-                manifest,
-                &mut download_control,
-            )?;
-            let controlled_lists = mapa::normalize_controlled_substances(&controlled_substances)?;
             let rows = mapa::collect(
                 &client,
                 &cookie_jar,
-                &controlled_lists,
                 &args.output,
                 manifest,
                 &mut download_control,

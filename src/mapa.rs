@@ -2,9 +2,7 @@ use crate::downloads::{DownloadControl, Manifest, save_source_bytes};
 use calamine::{Data, Reader, open_workbook_auto};
 use chrono::{Duration as ChronoDuration, NaiveDate};
 use rand::{Rng, distr::Alphanumeric};
-use regex::Regex;
 use reqwest::cookie::CookieStore;
-use scraper::{Html, Selector};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
@@ -21,144 +19,10 @@ const APP_ID: &str = "ab6f1c23-f41e-4977-8457-8d2a1d87054a";
 const WS_URL: &str =
     "wss://mapa-indicadores.agricultura.gov.br/publico/app/ab6f1c23-f41e-4977-8457-8d2a1d87054a";
 const TIMEOUT: Duration = Duration::from_secs(60);
-const CONTROLLED_LIST_CODES: &[&str] = &["A1", "A2", "A3", "B1", "C1", "C2", "C5"];
-
-pub fn normalize_controlled_substances(
-    bytes: &[u8],
-) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
-    let html = Html::parse_document(&String::from_utf8_lossy(bytes));
-    let selector = Selector::parse("p, tr, li, h1, h2, h3, h4")?;
-    let header = Regex::new(r"(?i)^LISTA\s+([A-Z]\d+)\s*:\s*(.+)$")?;
-    let mut in_annex = false;
-    let mut current: Option<(String, String, BTreeSet<String>)> = None;
-    let mut lists = Vec::new();
-
-    for element in html.select(&selector) {
-        let text = element
-            .text()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        if text.is_empty() {
-            continue;
-        }
-        let normalized = crate::portaria::normalize_text(&text);
-        if normalized == "ANEXO I" {
-            in_annex = true;
-            continue;
-        }
-        if normalized.starts_with("ANEXO II") {
-            break;
-        }
-        if !in_annex {
-            continue;
-        }
-        if let Some(captures) = header.captures(&text) {
-            if let Some((code, title, names)) = current.take() {
-                lists.push(json!({
-                    "code": code,
-                    "title": title,
-                    "entries": names.into_iter().map(|name| json!({"name": name})).collect::<Vec<_>>(),
-                }));
-            }
-            current = Some((
-                captures[1].to_uppercase(),
-                captures[2].trim().into(),
-                BTreeSet::new(),
-            ));
-            continue;
-        }
-        if let Some((_, _, names)) = current.as_mut() {
-            if !normalized
-                .chars()
-                .all(|character| character.is_ascii_digit())
-            {
-                names.insert(text);
-            }
-        }
-    }
-    if let Some((code, title, names)) = current {
-        lists.push(json!({
-            "code": code,
-            "title": title,
-            "entries": names.into_iter().map(|name| json!({"name": name})).collect::<Vec<_>>(),
-        }));
-    }
-
-    let found = lists
-        .iter()
-        .filter_map(|list| list["code"].as_str())
-        .collect::<BTreeSet<_>>();
-    let missing = CONTROLLED_LIST_CODES
-        .iter()
-        .filter(|code| !found.contains(**code))
-        .copied()
-        .collect::<Vec<_>>();
-    if !missing.is_empty() {
-        return Err(format!(
-            "Anexo I da Portaria MAPA nº 837/2025 incompleto; listas não encontradas: {}",
-            missing.join(", ")
-        )
-        .into());
-    }
-    Ok(lists)
-}
-
-struct MapaControlledClassifier {
-    lists: Vec<(String, BTreeSet<String>)>,
-}
-
-impl MapaControlledClassifier {
-    fn new(lists: &[Value]) -> Self {
-        let lists = lists
-            .iter()
-            .filter_map(|list| {
-                let code = list["code"].as_str()?.to_owned();
-                let names = list["entries"]
-                    .as_array()?
-                    .iter()
-                    .filter_map(|entry| entry["name"].as_str())
-                    .map(crate::portaria::normalize_text)
-                    .filter(|name| !name.is_empty())
-                    .collect();
-                Some((code, names))
-            })
-            .collect();
-        Self { lists }
-    }
-
-    fn classify(&self, ingredients: &[String]) -> Vec<String> {
-        let ingredients = ingredients
-            .iter()
-            .map(|name| crate::portaria::normalize_text(name))
-            .filter(|name| !name.is_empty())
-            .collect::<BTreeSet<_>>();
-        self.lists
-            .iter()
-            .filter(|(_, names)| {
-                ingredients.iter().any(|ingredient| {
-                    names.iter().any(|name| {
-                        contains_term(ingredient, name) || contains_term(name, ingredient)
-                    })
-                })
-            })
-            .map(|(code, _)| code.clone())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect()
-    }
-}
-
-fn contains_term(text: &str, term: &str) -> bool {
-    !term.is_empty() && format!(" {text} ").contains(&format!(" {term} "))
-}
 
 pub fn collect(
     client: &reqwest::blocking::Client,
     jar: &reqwest::cookie::Jar,
-    controlled_lists: &[Value],
     output: &Path,
     manifest: &mut Manifest,
     download_control: &mut DownloadControl,
@@ -217,6 +81,7 @@ pub fn collect(
         json!([APP_ID, "", "", "", false]),
     )?;
     let app_handle = returned_handle(&app)?;
+    rpc.call(&mut socket, app_handle, "ClearAll", json!([]))?;
     let field = rpc.call(
         &mut socket,
         app_handle,
@@ -227,9 +92,33 @@ pub fn collect(
     rpc.call(&mut socket, field_handle, "SelectAll", json!([false]))?;
     let table = rpc.call(&mut socket, app_handle, "GetObject", json!(["pNLmp"]))?;
     let table_handle = returned_handle(&table)?;
+    let properties = rpc.call(&mut socket, table_handle, "GetProperties", json!([]))?;
+    let mut definition = properties["qProp"]["qHyperCubeDef"].clone();
+    let measures = definition["qMeasures"]
+        .as_array_mut()
+        .ok_or("Tabela MAPA sem qMeasures no qHyperCubeDef")?;
+    // Aggregate per existing product row so multiple groups do not duplicate products.
+    for name in ["CS_GRUPO_CONTROLE", "ST_INSUMO_CONTROLADO_PRODUTO"] {
+        measures.push(json!({
+            "qDef": {
+                "qDef": format!("Concat(DISTINCT [{name}], ',')"),
+                "qLabel": name,
+            },
+        }));
+    }
+    let export_table = rpc.call(
+        &mut socket,
+        app_handle,
+        "CreateSessionObject",
+        json!([{
+            "qInfo": {"qType": "table"},
+            "qHyperCubeDef": definition,
+        }]),
+    )?;
+    let export_handle = returned_handle(&export_table)?;
     let export = rpc.call(
         &mut socket,
-        table_handle,
+        export_handle,
         "ExportData",
         json!(["OOXML", "/qHyperCubeDef", "", "P"]),
     )?;
@@ -262,7 +151,7 @@ pub fn collect(
             "O XLSX de produtos farmacêuticos veterinários do MAPA não contém registros".into(),
         );
     }
-    let rows = normalize_products(raw_rows, controlled_lists)?;
+    let rows = normalize_products(raw_rows)?;
     eprintln!(
         "MAPA: {} registros em {:.3}s",
         rows.len(),
@@ -271,11 +160,7 @@ pub fn collect(
     Ok(rows)
 }
 
-fn normalize_products(
-    rows: Vec<Value>,
-    controlled_lists: &[Value],
-) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
-    let classifier = MapaControlledClassifier::new(controlled_lists);
+fn normalize_products(rows: Vec<Value>) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
     rows.into_iter()
         .map(|row| {
             let registration = field(&row, "Registro do Produto");
@@ -290,7 +175,26 @@ fn normalize_products(
             let presentation_text = field(&row, "Apresentação do Produto");
             let pharmaceutical_form = null_if_placeholder(field(&row, "Forma Farmacêutica"));
             let active_ingredients = split_values(field(&row, "IFA´s"));
-            let controlled_substance_lists = classifier.classify(&active_ingredients);
+            let control_groups = split_values(field(&row, "CS_GRUPO_CONTROLE"))
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let controlled_ingredient_flags =
+                split_values(field(&row, "ST_INSUMO_CONTROLADO_PRODUTO"));
+            let additional_characteristic = field(&row, "Característica Adicional");
+            let is_controlled = if !control_groups.is_empty()
+                || controlled_ingredient_flags.iter().any(|flag| flag == "S")
+                || additional_characteristic == "CONTROLADO"
+            {
+                Some(true)
+            } else if controlled_ingredient_flags.iter().any(|flag| flag == "N")
+                || additional_characteristic == "NÃO CONTROLADO"
+            {
+                Some(false)
+            } else {
+                None
+            };
             let presentations = split_presentations(&presentation_text)
                 .into_iter()
                 .map(|description| {
@@ -320,6 +224,9 @@ fn normalize_products(
             let product_type = null_if_placeholder(field(&row, "Classificação do estabelecimento"));
 
             let veterinary_details = json!({
+                "is_controlled": is_controlled,
+                "control_groups": control_groups,
+                "controlled_ingredient_flags": controlled_ingredient_flags,
                 "species": split_values(field(&row, "Espécie Animal")),
                 "administration_route": null_if_placeholder(field(&row, "Via Administração")),
                 "warnings": null_if_placeholder(field(&row, "Advertência")),
@@ -359,7 +266,7 @@ fn normalize_products(
                 "regulatory_restrictions": [],
                 "regulatory_restriction_types": [],
                 "portaria_344_lists": [],
-                "mapa_controlled_substance_lists": controlled_substance_lists,
+                "mapa_controlled_substance_lists": [],
                 "sncr_prescription_types": [],
                 "tarja": [],
                 "fractional_dispensing": [],
@@ -736,6 +643,11 @@ fn read_xlsx(path: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
             unique
         })
         .collect::<Vec<_>>();
+    for required in ["CS_GRUPO_CONTROLE", "ST_INSUMO_CONTROLADO_PRODUTO"] {
+        if !headers.iter().any(|header| header == required) {
+            return Err(format!("XLSX do MAPA sem a coluna de controle {required}").into());
+        }
+    }
     let output = rows
         .filter(|row| row.iter().any(|cell| !matches!(cell, Data::Empty)))
         .map(|row| {
@@ -765,5 +677,53 @@ fn data_value(value: &Data) -> Value {
         Data::Bool(value) => json!(value),
         Data::DateTime(value) => Value::String(value.to_string()),
         Data::Error(value) => Value::String(format!("{value:?}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_qlik_groups_without_inferring_regulatory_lists() {
+        let rows = normalize_products(vec![json!({
+            "Registro do Produto": "test-1",
+            "Nome do Produto": "Example",
+            "IFA´s": "CLORIDRATO DE CETAMINA",
+            "CS_GRUPO_CONTROLE": "C1,B,C1",
+            "ST_INSUMO_CONTROLADO_PRODUTO": "N,S",
+            "Característica Adicional": "NÃO CONTROLADO",
+        })])
+        .unwrap();
+        assert_eq!(rows[0]["mapa_controlled_substance_lists"], json!([]));
+        let details = &rows[0]["veterinary_details"];
+        assert_eq!(details["control_groups"], json!(["B", "C1"]));
+        assert_eq!(details["controlled_ingredient_flags"], json!(["N", "S"]));
+        assert_eq!(details["is_controlled"], true);
+    }
+
+    #[test]
+    fn distinguishes_explicit_control_status_from_unknown_without_using_ingredients() {
+        for (flags, characteristic, expected) in [
+            ("S", "OUTROS PRODUTOS", json!(true)),
+            ("N,S", "OUTROS PRODUTOS", json!(true)),
+            ("N", "OUTROS PRODUTOS", json!(false)),
+            ("-", "CONTROLADO", json!(true)),
+            ("-", "NÃO CONTROLADO", json!(false)),
+            ("-", "OUTROS PRODUTOS", Value::Null),
+        ] {
+            let rows = normalize_products(vec![json!({
+                "Registro do Produto": "test-1",
+                "Nome do Produto": "Example",
+                "IFA´s": "CETAMINA",
+                "CS_GRUPO_CONTROLE": "-",
+                "ST_INSUMO_CONTROLADO_PRODUTO": flags,
+                "Característica Adicional": characteristic,
+            })])
+            .unwrap();
+            assert_eq!(rows[0]["veterinary_details"]["is_controlled"], expected);
+            assert_eq!(rows[0]["veterinary_details"]["control_groups"], json!([]));
+            assert_eq!(rows[0]["mapa_controlled_substance_lists"], json!([]));
+        }
     }
 }

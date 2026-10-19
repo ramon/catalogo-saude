@@ -105,9 +105,20 @@ fn assert_isolation(corrupt_medicine_hash: bool) {
             .join("portaria-344/lists/batch-000001.json")
             .is_file()
     );
-    assert!(logs.contains("[5/5]"));
+    assert!(logs.contains("[5/6]"));
     assert!(logs.contains("Coleta concluída com falhas"));
-    assert_eq!(fs::read_dir(fixture.0.join("sources")).unwrap().count(), 8);
+    assert_eq!(
+        fs::read_dir(fixture.0.join("sources"))
+            .unwrap()
+            .filter(|entry| entry
+                .as_ref()
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "raw"))
+            .count(),
+        8
+    );
 }
 
 #[test]
