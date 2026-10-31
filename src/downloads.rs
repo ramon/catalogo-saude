@@ -19,7 +19,7 @@ pub const COSMETICS: &str =
 pub const CANNABIS: &str =
     "https://dados.anvisa.gov.br/dados/CONSULTAS/PRODUTOS/TA_CONSULTA_PRODUTOS_CANNABIS.CSV";
 pub const PORTARIA: &str = "https://anvisalegis.datalegis.net/action/ActionDatalegis.php?acao=abrirTextoAto&cod_menu=8542&cod_modulo=310&link=S&numeroAto=00000344&orgao=SVS%2FMS&seqAto=000&tipo=POR&valorAno=1998";
-pub const SIGTAP: &str = "https://github.com/RenatoKR/SIGTAP/raw/refs/heads/main/tabelas/TabelaUnificada_202608_v2608141139.zip";
+pub const SIGTAP: &str = "https://api.github.com/repos/RenatoKR/SIGTAP/contents/tabelas?ref=main";
 pub const ANS: &str = "https://www.gov.br/ans/pt-br/arquivos/assuntos/prestadores/padrao-para-troca-de-informacao-de-saude-suplementar-tiss/padrao-tiss-tabelas-relacionadas/padraotiss_mapeamento_tuss_sigtap.zip";
 
 #[derive(Serialize)]
@@ -52,6 +52,29 @@ pub struct DownloadedFile {
     pub filename: String,
     pub downloaded_at: String,
     pub sha1: String,
+}
+
+#[derive(Deserialize)]
+struct GitHubDirectoryEntry {
+    name: String,
+    download_url: Option<String>,
+}
+
+pub fn latest_sigtap_url(
+    client: &reqwest::blocking::Client,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let body = client.get(SIGTAP).send()?.error_for_status()?.text()?;
+    let entries: Vec<GitHubDirectoryEntry> = serde_json::from_str(&body)?;
+    let latest = entries
+        .into_iter()
+        .filter(|entry| entry.name.starts_with("TabelaUnificada_") && entry.name.ends_with(".zip"))
+        .max_by(|left, right| left.name.cmp(&right.name))
+        .ok_or("Nenhum ZIP TabelaUnificada encontrado no diretório SIGTAP")?;
+    let url = latest
+        .download_url
+        .ok_or_else(|| format!("GitHub não informou URL para {}", latest.name))?;
+    eprintln!("ZIP SIGTAP mais recente: {}", latest.name);
+    Ok(url)
 }
 
 pub fn fetch(

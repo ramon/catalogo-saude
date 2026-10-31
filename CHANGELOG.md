@@ -4,6 +4,13 @@ As mudanças relevantes do Catálogo Saúde estão registradas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/),
 e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
+## [0.5.1] - 2026-10-31
+
+### Corrigido
+
+- Descobre automaticamente o ZIP SIGTAP mais recente no diretório de tabelas
+  do repositório RenatoKR/SIGTAP.
+
 ## [0.5.0] - 2026-10-19
 
 ### Adicionado
@@ -109,6 +116,7 @@ e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - Binário para Linux x86_64 com GNU libc.
 
 [0.5.0]: https://github.com/ramon/catalogo-saude/compare/v0.4.0...v0.5.0
+[0.5.1]: https://github.com/ramon/catalogo-saude/compare/v0.5.0...v0.5.1
 [0.3.0]: https://github.com/ramon/catalogo-saude/compare/v0.2.2...v0.3.0
 [0.4.0]: https://github.com/ramon/catalogo-saude/compare/v0.3.0...v0.4.0
 [0.2.2]: https://github.com/ramon/catalogo-saude/compare/v0.2.1...v0.2.2

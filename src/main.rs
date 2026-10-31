@@ -13,7 +13,7 @@ use clap::{Parser, ValueEnum};
 use cosmetics::normalize_cosmetics;
 use downloads::{
     ANS, CANNABIS, COSMETICS, DownloadControl, MED_CONSULT, MED_OPEN, MED_PRICES, Manifest,
-    PORTARIA, SIGTAP, fetch, fetch_file, record_phase,
+    PORTARIA, fetch, fetch_file, latest_sigtap_url, record_phase,
 };
 use output::{write_atomic, write_batches, write_batches_by_status};
 use sigtap::normalize_sigtap;
@@ -325,10 +325,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     run_catalog(Catalog::Sigtap, args.catalog, &mut manifest, |manifest| {
         eprintln!("[5/6] SIGTAP, TUSS e CID-10");
+        let sigtap_url = latest_sigtap_url(&client)?;
         let sigtap = fetch(
             &client,
             "sigtap",
-            SIGTAP,
+            &sigtap_url,
             args.reuse_sources,
             &args.output,
             manifest,

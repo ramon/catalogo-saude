@@ -25,10 +25,10 @@ O comando exibe o andamento de cada fonte e etapa. Para escolher outro tamanho d
 
 Para gerar somente um catálogo, use `--catalog` com um dos valores `medicines`, `cosmetics`, `cannabis`, `portaria_344`, `sigtap` ou `mapa_veterinary`. Por exemplo, `--catalog cosmetics` processa apenas cosméticos.
 
-Também é possível baixar o executável da [versão v0.5.0](https://github.com/ramon/catalogo-saude/releases/tag/v0.5.0), publicada para Linux x86_64 com GNU libc. O pacote `catalogo-saude-v0.5.0-x86_64-unknown-linux-gnu.tar.gz` inclui o executável e as referências necessárias. Depois de extrair o pacote:
+Também é possível baixar o executável da [versão v0.5.1](https://github.com/ramon/catalogo-saude/releases/tag/v0.5.1), publicada para Linux x86_64 com GNU libc. O pacote `catalogo-saude-v0.5.1-x86_64-unknown-linux-gnu.tar.gz` inclui o executável e as referências necessárias. Depois de extrair o pacote:
 
 ```sh
-./catalogo-saude-release-v0.5.0/catalogo-saude --output ./runs/minha-coleta
+./catalogo-saude-release-v0.5.1/catalogo-saude --output ./runs/minha-coleta
 ```
 
 O executável recebe as mesmas opções da CLI, por exemplo `--output` e `--batch-size`. Mantenha a pasta `references/` incluída no pacote junto ao executável; ela permite executar a coleta fora do repositório. As referências do pacote têm prioridade sobre as da pasta atual.
