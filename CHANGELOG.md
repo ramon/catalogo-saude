@@ -11,6 +11,16 @@ e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - Descobre automaticamente o ZIP SIGTAP mais recente no diretório de tabelas
   do repositório RenatoKR/SIGTAP.
 
+## [0.6.0] - 2026-11-07
+
+### Adicionado
+
+- Catálogo de 260 biomarcadores com códigos LOINC, aliases, unidades e faixas
+  de referência, incluindo variantes por sexo, idade e gestação.
+- Registro bibliográfico das fontes das faixas, com atribuição e avisos de
+  licença do catálogo de origem e do conteúdo LOINC.
+- Opção `--catalog biomarkers` para gerar definições e fontes em lotes JSON.
+
 ## [0.5.0] - 2026-10-19
 
 ### Adicionado
@@ -117,6 +127,7 @@ e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 [0.5.0]: https://github.com/ramon/catalogo-saude/compare/v0.4.0...v0.5.0
 [0.5.1]: https://github.com/ramon/catalogo-saude/compare/v0.5.0...v0.5.1
+[0.6.0]: https://github.com/ramon/catalogo-saude/compare/v0.5.1...v0.6.0
 [0.3.0]: https://github.com/ramon/catalogo-saude/compare/v0.2.2...v0.3.0
 [0.4.0]: https://github.com/ramon/catalogo-saude/compare/v0.3.0...v0.4.0
 [0.2.2]: https://github.com/ramon/catalogo-saude/compare/v0.2.1...v0.2.2

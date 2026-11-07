@@ -1,4 +1,5 @@
 mod anvisa;
+mod biomarkers;
 mod cosmetics;
 mod downloads;
 mod mapa;
@@ -54,6 +55,7 @@ enum Catalog {
     Sigtap,
     #[value(name = "mapa_veterinary")]
     MapaVeterinary,
+    Biomarkers,
 }
 
 impl Catalog {
@@ -65,6 +67,7 @@ impl Catalog {
             Self::Portaria344 => "portaria_344",
             Self::Sigtap => "sigtap",
             Self::MapaVeterinary => "mapa_veterinary",
+            Self::Biomarkers => "biomarkers",
         }
     }
 }
@@ -82,6 +85,7 @@ fn reference_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
             "references/anvisa/formas_fisicas.json",
             "references/anvisa/restricao.json",
             "references/anvisa/tarja.json",
+            "references/biomarkers.json",
         ]
         .iter()
         .all(|file| root.join(file).is_file())
@@ -166,7 +170,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "Referências locais: {}",
                 project_root.join("references").display()
             );
-            eprintln!("[1/6] Medicamentos: obtenção e cruzamento das três fontes");
+            eprintln!("[1/7] Medicamentos: obtenção e cruzamento das três fontes");
             let med_open = fetch(
                 &client,
                 "medicines_open",
@@ -241,7 +245,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.catalog,
         &mut manifest,
         |manifest| {
-            eprintln!("[2/6] Cosméticos");
+            eprintln!("[2/7] Cosméticos");
             let cosmetics = fetch_file(
                 &client,
                 "cosmetics",
@@ -259,7 +263,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
     run_catalog(Catalog::Cannabis, args.catalog, &mut manifest, |manifest| {
-        eprintln!("[3/6] Produtos de cannabis");
+        eprintln!("[3/7] Produtos de cannabis");
         let cannabis = fetch(
             &client,
             "cannabis",
@@ -292,7 +296,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.catalog,
         &mut manifest,
         |manifest| {
-            eprintln!("[4/6] Portaria 344: gravação das listas");
+            eprintln!("[4/7] Portaria 344: gravação das listas");
             if portaria_rows.is_none() {
                 let raw = fetch(
                     &client,
@@ -324,7 +328,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
     run_catalog(Catalog::Sigtap, args.catalog, &mut manifest, |manifest| {
-        eprintln!("[5/6] SIGTAP, TUSS e CID-10");
+        eprintln!("[5/7] SIGTAP, TUSS e CID-10");
         let sigtap_url = latest_sigtap_url(&client)?;
         let sigtap = fetch(
             &client,
@@ -390,7 +394,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.catalog,
         &mut manifest,
         |manifest| {
-            eprintln!("[6/6] Produtos farmacêuticos veterinários do MAPA");
+            eprintln!("[6/7] Produtos farmacêuticos veterinários do MAPA");
             let phase_started = Instant::now();
             let rows = mapa::collect(
                 &client,
@@ -413,6 +417,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "collect_normalize_and_write.mapa_veterinary",
                 phase_started,
             );
+            Ok(())
+        },
+    );
+    run_catalog(
+        Catalog::Biomarkers,
+        args.catalog,
+        &mut manifest,
+        |manifest| {
+            eprintln!("[7/7] Biomarcadores e faixas de referência");
+            let project_root = reference_root()?;
+            let phase_started = Instant::now();
+            let (definitions, sources) = biomarkers::collect(&project_root)?;
+            manifest.counts.insert(
+                "biomarkers".into(),
+                write_batches(
+                    &args.output,
+                    "biomarkers/definitions",
+                    definitions,
+                    args.batch_size,
+                )?,
+            );
+            manifest.counts.insert(
+                "biomarker_sources".into(),
+                write_batches(&args.output, "biomarkers/sources", sources, args.batch_size)?,
+            );
+            record_phase(manifest, "normalize_and_write.biomarkers", phase_started);
             Ok(())
         },
     );

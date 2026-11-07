@@ -9,6 +9,7 @@ O Catálogo Saúde reúne dados públicos de medicamentos e outros catálogos de
 - **Portaria 344:** listas de substâncias sujeitas a controle especial.
 - **SIGTAP, TUSS e CID-10:** procedimentos, vínculos com a TUSS e códigos CID-10.
 - **Produtos farmacêuticos veterinários:** catálogo público do MAPA exportado do painel Qlik Sense.
+- **Biomarcadores:** definições, códigos LOINC, unidades, faixas de referência e bibliografia do fhir-brasil.
 
 O catálogo DCB não faz parte desta coleta. Arquivos regulatórios já mantidos em `references/anvisa/` são usados localmente.
 
@@ -23,15 +24,21 @@ mise exec -- cargo run --release -- --output ./runs/minha-coleta
 
 O comando exibe o andamento de cada fonte e etapa. Para escolher outro tamanho de lote, use `--batch-size` (o padrão é `1000`).
 
-Para gerar somente um catálogo, use `--catalog` com um dos valores `medicines`, `cosmetics`, `cannabis`, `portaria_344`, `sigtap` ou `mapa_veterinary`. Por exemplo, `--catalog cosmetics` processa apenas cosméticos.
+Para gerar somente um catálogo, use `--catalog` com um dos valores `medicines`, `cosmetics`, `cannabis`, `portaria_344`, `sigtap`, `mapa_veterinary` ou `biomarkers`. Por exemplo, `--catalog cosmetics` processa apenas cosméticos.
 
-Também é possível baixar o executável da [versão v0.5.1](https://github.com/ramon/catalogo-saude/releases/tag/v0.5.1), publicada para Linux x86_64 com GNU libc. O pacote `catalogo-saude-v0.5.1-x86_64-unknown-linux-gnu.tar.gz` inclui o executável e as referências necessárias. Depois de extrair o pacote:
+Também é possível baixar o executável da [versão v0.6.0](https://github.com/ramon/catalogo-saude/releases/tag/v0.6.0), publicada para Linux x86_64 com GNU libc. O pacote `catalogo-saude-v0.6.0-x86_64-unknown-linux-gnu.tar.gz` inclui o executável e as referências necessárias. Depois de extrair o pacote:
 
 ```sh
-./catalogo-saude-release-v0.5.1/catalogo-saude --output ./runs/minha-coleta
+./catalogo-saude-release-v0.6.0/catalogo-saude --output ./runs/minha-coleta
 ```
 
 O executável recebe as mesmas opções da CLI, por exemplo `--output` e `--batch-size`. Mantenha a pasta `references/` incluída no pacote junto ao executável; ela permite executar a coleta fora do repositório. As referências do pacote têm prioridade sobre as da pasta atual.
+
+## Biomarcadores e faixas de referência
+
+O catálogo `biomarkers` deriva das definições mantidas pelo projeto [fhir-brasil](https://github.com/Precisa-Saude/fhir-brasil), versão 2.0.0. Ele gera `biomarkers/definitions/` com os biomarcadores, aliases, códigos LOINC, nomes em português e inglês, unidades, metadados de seção e faixas de referência com variantes por sexo, idade e gestação. `biomarkers/sources/` contém o registro bibliográfico citado pelas chaves `source` das faixas. Cada registro indica o projeto e a versão de origem.
+
+A cópia de referência fica em `references/biomarkers.json`; o aviso de atribuição e as licenças estão em `references/fhir-brasil-ATTRIBUTION.md` e `references/fhir-brasil-APACHE-2.0.txt`. O catálogo é local e não baixa fontes durante a execução. Para regenerar os lotes com a cópia atual, use `--catalog biomarkers`.
 
 ## Arquivos gerados
 
@@ -60,7 +67,7 @@ O campo `mapa_controlled_substance_lists` é mantido vazio para preservar o form
 
 A pasta `ativo/` recebe medicamentos com situação `Ativo`, cosméticos com `S` e cannabis com `Válido`. A pasta `inativos/` recebe, respectivamente, `Inativo`, `N` e `Caduco/Cancelado`. Os valores de `regulatory_status` são preservados nos registros; situações desconhecidas interrompem a execução.
 
-Cada pasta possui numeração própria, com até mil registros por lote por padrão. As duas pastas são criadas mesmo quando uma delas estiver vazia. Ao reprocessar, são removidos os lotes antigos dessas pastas e, após a gravação, os lotes do formato anterior diretamente na pasta do catálogo. Outros arquivos são preservados. Portaria 344, SIGTAP e MAPA continuam em `portaria-344/lists/`, `sigtap/` e `mapa-veterinary/products/`.
+Cada pasta possui numeração própria, com até mil registros por lote por padrão. As duas pastas são criadas mesmo quando uma delas estiver vazia. Ao reprocessar, são removidos os lotes antigos dessas pastas e, após a gravação, os lotes do formato anterior diretamente na pasta do catálogo. Outros arquivos são preservados. Portaria 344, SIGTAP, MAPA e biomarcadores ficam em `portaria-344/lists/`, `sigtap/`, `mapa-veterinary/products/` e `biomarkers/`, respectivamente.
 
 Guarde o diretório da coleta se quiser manter as fontes usadas. Para normalizar novamente usando esses downloads, informe o mesmo diretório e `--reuse-sources`:
 
