@@ -12,7 +12,8 @@ use zip::ZipArchive;
 pub fn normalize_sigtap(
     bytes: &[u8],
     ans_bytes: &[u8],
-) -> Result<(Vec<Value>, Vec<Value>, Vec<Value>, Vec<Value>), Box<dyn std::error::Error>> {
+) -> Result<(Vec<Value>, Vec<Value>, Vec<Value>, Vec<Value>, Vec<Value>), Box<dyn std::error::Error>>
+{
     let mut z = ZipArchive::new(Cursor::new(bytes))?;
     let names = (0..z.len())
         .map(|i| z.by_index(i).map(|f| f.name().to_string()))
@@ -103,16 +104,44 @@ pub fn normalize_sigtap(
     );
     let all = tables.get("tb_procedimento").cloned().unwrap_or_default();
     let mut procs = Vec::new();
-    let mut codes = BTreeSet::new();
+    let mut diagnostic_codes = BTreeSet::new();
+    let mut health_codes = BTreeSet::new();
+    let mut all_codes = BTreeSet::new();
+    let mut health_procs = Vec::new();
     for p in &all {
         let code = get(p, "CO_PROCEDIMENTO");
+        if code.is_empty() {
+            continue;
+        }
+        let (subgroup, org) = procedure_hierarchy(p)?;
+        let group_code = &code[..2];
+        let group_row = groups
+            .get(group_code)
+            .ok_or_else(|| format!("Grupo SIGTAP {group_code} ausente para {code}"))?;
+        let subgroup_row = subgroups.get(&subgroup);
+        let organization_row = organizations.get(&org);
+        all_codes.insert(code.clone());
+        if matches!(group_code, "03" | "04") {
+            health_codes.insert(code.clone());
+            health_procs.push(json!({
+                "sigtap_code":code,
+                "name":get(p,"NO_PROCEDIMENTO"),
+                "group_code":group_code,
+                "group_name":get(group_row,"NO_GRUPO"),
+                "subgroup_code":subgroup,
+                "subgroup_name":subgroup_row.map(|r|get(r,"NO_SUB_GRUPO")).unwrap_or_default(),
+                "organization_code":org,
+                "organization_name":organization_row.map(|r|get(r,"NO_FORMA_ORGANIZACAO")).unwrap_or_default(),
+                "tuss_codes":[],
+                "attributes":{"source_fields":p}
+            }));
+        }
         if !code.starts_with("02") {
             continue;
         }
-        codes.insert(code.clone());
-        let (subgroup, org) = procedure_hierarchy(p)?;
-        let sg = subgroups.get(&subgroup);
-        let og = organizations.get(&org);
+        diagnostic_codes.insert(code.clone());
+        let sg = subgroup_row;
+        let og = organization_row;
         procs.push(json!({"sigtap_code":code,"name":get(p,"NO_PROCEDIMENTO"),"group_code":"02","group_name":get(group,"NO_GRUPO"),"subgroup_code":subgroup,"subgroup_name":sg.map(|r|get(r,"NO_SUB_GRUPO")).unwrap_or_default(),"organization_code":org,"organization_name":og.map(|r|get(r,"NO_FORMA_ORGANIZACAO")).unwrap_or_default(),"tuss_codes":[],"areas":[],"occupations":[],"attributes":{"source_fields":p}}));
     }
     if procs.is_empty() {
@@ -140,7 +169,7 @@ pub fn normalize_sigtap(
     {
         let proc = get(&r, "CO_PROCEDIMENTO");
         let cid = get(&r, "CO_CID");
-        if codes.contains(&proc) && cidcodes.contains(&cid) {
+        if diagnostic_codes.contains(&proc) && cidcodes.contains(&cid) {
             links.push(json!({"sigtap_code":proc,"cid10_code":cid,"is_principal":get(&r,"ST_PRINCIPAL")=="S","competence":get(&r,"DT_COMPETENCIA")}));
         }
     }
@@ -154,15 +183,57 @@ pub fn normalize_sigtap(
     {
         let proc = get(&r, "CO_PROCEDIMENTO");
         let code = get(&r, "CO_TUSS");
-        if codes.contains(&proc) {
+        if all_codes.contains(&proc) {
             if let Some(t) = tuss.get(&code) {
                 mappings.push(json!({"sigtap_code":proc,"tuss_code":code,"tuss_name":get(t,"NO_TUSS"),"source":"SIGTAP","source_revision":"","equivalence_grade":"","equivalence_label":"","mapping_status":"Relação publicada no SIGTAP","mapping_situation":""}));
             }
         }
     }
-    mappings.extend(parse_ans_crosswalk(ans_bytes, &codes, &tuss)?);
-    eprintln!("TUSS: {} vínculos SIGTAP e ANS", mappings.len());
-    Ok((procs, mappings, cids, links))
+    mappings.extend(parse_ans_crosswalk(ans_bytes, &all_codes, &tuss)?);
+    let all_mappings = mappings;
+    let catalog_codes = diagnostic_codes
+        .union(&health_codes)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let catalog_mappings = all_mappings
+        .iter()
+        .filter(|mapping| {
+            mapping["sigtap_code"]
+                .as_str()
+                .is_some_and(|code| catalog_codes.contains(code))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut tuss_codes_by_procedure: HashMap<String, BTreeSet<String>> = HashMap::new();
+    for mapping in &catalog_mappings {
+        if let (Some(procedure), Some(tuss_code)) = (
+            mapping["sigtap_code"].as_str(),
+            mapping["tuss_code"].as_str(),
+        ) {
+            tuss_codes_by_procedure
+                .entry(procedure.to_string())
+                .or_default()
+                .insert(tuss_code.to_string());
+        }
+    }
+    for procedure in &mut health_procs {
+        let code = procedure["sigtap_code"].as_str().unwrap_or_default();
+        let codes = tuss_codes_by_procedure
+            .get(code)
+            .cloned()
+            .unwrap_or_default();
+        procedure["tuss_codes"] = json!(codes);
+    }
+    health_procs.sort_by_key(|v| v["sigtap_code"].as_str().unwrap_or("").to_string());
+    eprintln!(
+        "SIGTAP: {} procedimentos dos grupos 03 e 04",
+        health_procs.len()
+    );
+    eprintln!(
+        "TUSS: {} vínculos SIGTAP e ANS para os grupos 02, 03 e 04",
+        catalog_mappings.len()
+    );
+    Ok((procs, catalog_mappings, cids, links, health_procs))
 }
 
 fn procedure_hierarchy(

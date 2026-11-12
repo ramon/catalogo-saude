@@ -7,7 +7,7 @@ O Catálogo Saúde reúne dados públicos de medicamentos e outros catálogos de
 - **Medicamentos:** combina dados abertos, consulta de produtos e preços da Anvisa.
 - **Cosméticos e produtos de cannabis:** consulta de produtos da Anvisa.
 - **Portaria 344:** listas de substâncias sujeitas a controle especial.
-- **SIGTAP, TUSS e CID-10:** procedimentos, vínculos com a TUSS e códigos CID-10.
+- **SIGTAP, TUSS e CID-10:** procedimentos de saúde dos grupos 03 e 04, procedimentos diagnósticos do grupo 02, vínculos com a TUSS e códigos CID-10.
 - **Produtos farmacêuticos veterinários:** catálogo público do MAPA exportado do painel Qlik Sense.
 - **Biomarcadores:** definições, códigos LOINC, unidades, faixas de referência e bibliografia do fhir-brasil.
 
@@ -26,10 +26,10 @@ O comando exibe o andamento de cada fonte e etapa. Para escolher outro tamanho d
 
 Para gerar somente um catálogo, use `--catalog` com um dos valores `medicines`, `cosmetics`, `cannabis`, `portaria_344`, `sigtap`, `mapa_veterinary` ou `biomarkers`. Por exemplo, `--catalog cosmetics` processa apenas cosméticos.
 
-Também é possível baixar o executável da [versão v0.6.0](https://github.com/ramon/catalogo-saude/releases/tag/v0.6.0), publicada para Linux x86_64 com GNU libc. O pacote `catalogo-saude-v0.6.0-x86_64-unknown-linux-gnu.tar.gz` inclui o executável e as referências necessárias. Depois de extrair o pacote:
+Também é possível baixar o executável da [versão v0.7.0](https://github.com/ramon/catalogo-saude/releases/tag/v0.7.0), publicada para Linux x86_64 com GNU libc. O pacote `catalogo-saude-v0.7.0-x86_64-unknown-linux-gnu.tar.gz` inclui o executável e as referências necessárias. Depois de extrair o pacote:
 
 ```sh
-./catalogo-saude-release-v0.6.0/catalogo-saude --output ./runs/minha-coleta
+./catalogo-saude-release-v0.7.0/catalogo-saude --output ./runs/minha-coleta
 ```
 
 O executável recebe as mesmas opções da CLI, por exemplo `--output` e `--batch-size`. Mantenha a pasta `references/` incluída no pacote junto ao executável; ela permite executar a coleta fora do repositório. As referências do pacote têm prioridade sobre as da pasta atual.
@@ -67,7 +67,7 @@ O campo `mapa_controlled_substance_lists` é mantido vazio para preservar o form
 
 A pasta `ativo/` recebe medicamentos com situação `Ativo`, cosméticos com `S` e cannabis com `Válido`. A pasta `inativos/` recebe, respectivamente, `Inativo`, `N` e `Caduco/Cancelado`. Os valores de `regulatory_status` são preservados nos registros; situações desconhecidas interrompem a execução.
 
-Cada pasta possui numeração própria, com até mil registros por lote por padrão. As duas pastas são criadas mesmo quando uma delas estiver vazia. Ao reprocessar, são removidos os lotes antigos dessas pastas e, após a gravação, os lotes do formato anterior diretamente na pasta do catálogo. Outros arquivos são preservados. Portaria 344, SIGTAP, MAPA e biomarcadores ficam em `portaria-344/lists/`, `sigtap/`, `mapa-veterinary/products/` e `biomarkers/`, respectivamente.
+Cada pasta possui numeração própria, com até mil registros por lote por padrão. As duas pastas são criadas mesmo quando uma delas estiver vazia. Ao reprocessar, são removidos os lotes antigos dessas pastas e, após a gravação, os lotes do formato anterior diretamente na pasta do catálogo. Outros arquivos são preservados. Portaria 344, SIGTAP, MAPA e biomarcadores ficam em `portaria-344/lists/`, `sigtap/`, `mapa-veterinary/products/` e `biomarkers/`, respectivamente. O SIGTAP grava os procedimentos de saúde dos grupos 03 e 04 em `sigtap/health-procedures/`, preserva os procedimentos diagnósticos do grupo 02 em `sigtap/procedures/` e publica os vínculos TUSS detalhados para esses grupos em `sigtap/tuss-mappings/`.
 
 Guarde o diretório da coleta se quiser manter as fontes usadas. Para normalizar novamente usando esses downloads, informe o mesmo diretório e `--reuse-sources`:
 

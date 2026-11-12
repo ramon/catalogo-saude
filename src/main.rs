@@ -349,8 +349,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &mut download_control,
         )?;
         let phase_started = Instant::now();
-        let (procedures, mappings, cids, cid_links) = normalize_sigtap(&sigtap, &ans)?;
+        let (procedures, mappings, cids, cid_links, health_procedures) =
+            normalize_sigtap(&sigtap, &ans)?;
         drop((sigtap, ans));
+        manifest.counts.insert(
+            "health_procedures".into(),
+            write_batches(
+                &args.output,
+                "sigtap/health-procedures",
+                health_procedures,
+                args.batch_size,
+            )?,
+        );
         manifest.counts.insert(
             "diagnostic_procedures".into(),
             write_batches(

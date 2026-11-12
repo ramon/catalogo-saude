@@ -21,6 +21,15 @@ e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
   licença do catálogo de origem e do conteúdo LOINC.
 - Opção `--catalog biomarkers` para gerar definições e fontes em lotes JSON.
 
+## [0.7.0] - 2026-11-12
+
+### Adicionado
+
+- Catálogo de procedimentos de saúde SIGTAP dos grupos 03 e 04 em
+  `sigtap/health-procedures/`, preservando o catálogo diagnóstico do grupo 02.
+- Vínculos detalhados entre SIGTAP e TUSS para os procedimentos dos grupos 02,
+  03 e 04, com nome TUSS, situação e grau de equivalência publicados pela ANS.
+
 ## [0.5.0] - 2026-10-19
 
 ### Adicionado
@@ -128,6 +137,7 @@ e as versões seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 [0.5.0]: https://github.com/ramon/catalogo-saude/compare/v0.4.0...v0.5.0
 [0.5.1]: https://github.com/ramon/catalogo-saude/compare/v0.5.0...v0.5.1
 [0.6.0]: https://github.com/ramon/catalogo-saude/compare/v0.5.1...v0.6.0
+[0.7.0]: https://github.com/ramon/catalogo-saude/compare/v0.6.0...v0.7.0
 [0.3.0]: https://github.com/ramon/catalogo-saude/compare/v0.2.2...v0.3.0
 [0.4.0]: https://github.com/ramon/catalogo-saude/compare/v0.3.0...v0.4.0
 [0.2.2]: https://github.com/ramon/catalogo-saude/compare/v0.2.1...v0.2.2
